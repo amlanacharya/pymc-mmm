@@ -1,0 +1,695 @@
+#   Copyright 2022 - 2026 The PyMC Labs Developers
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+"""Saturation transformations for the MMM model.
+
+Each of these transformations is a subclass of
+:class:`pymc_marketing.mmm.components.saturation.SaturationTransformation` and defines a function
+that takes media and return the saturated media. The parameters of the function
+are the parameters of the saturation transformation.
+
+Notes
+-----
+The wrapper classes in this module extend the transformer functions in
+:mod:`pymc_marketing.mmm.transformers` with the priors needed to fit them in a model.
+Several wrappers also introduce an extra scaling parameter that the underlying
+transformer does not take, so the curve can reach a value other than the bounded
+range of the transformer:
+
+- :class:`LogisticSaturation`, :class:`InverseScaledLogisticSaturation`,
+  :class:`TanhSaturationBaselined`, :class:`HillSaturation`, :class:`RootSaturation`,
+  and :class:`NoSaturation` multiply the output by ``beta``.
+- :class:`MichaelisMentenSaturation`, :class:`TanhSaturation`, and
+  :class:`HillSaturationSigmoid` do not add an extra parameter because the underlying
+  function already exposes the asymptote (``alpha``, ``b``, or ``sigma``).
+
+See each class for the full list of parameters and their default priors.
+
+Examples
+--------
+Create a new saturation transformation:
+
+.. code-block:: python
+
+    from pymc_marketing.mmm import SaturationTransformation
+    from pymc_extras.prior import Prior
+
+
+    from pymc_marketing.serialization import serialization
+
+
+    @serialization.register
+    class InfiniteReturns(SaturationTransformation):
+        def function(self, x, b):
+            return b * x
+
+        default_priors = {"b": Prior("HalfNormal", sigma=1)}
+
+Plot the default priors for a saturation transformation:
+
+.. code-block:: python
+
+    from pymc_marketing.mmm import HillSaturation
+
+    import matplotlib.pyplot as plt
+
+    saturation = HillSaturation()
+    prior = saturation.sample_prior()
+    curve = saturation.sample_curve(prior)
+    saturation.plot_curve(curve)
+    plt.show()
+
+Define a hierarchical saturation function with only hierarchical parameters
+for saturation parameter of logistic saturation.
+
+.. code-block:: python
+
+    from pymc_extras.prior import Prior
+    from pymc_marketing.mmm import LogisticSaturation
+
+    hierarchical_lam = Prior(
+        "Gamma",
+        alpha=Prior("HalfNormal"),
+        beta=Prior("HalfNormal"),
+        dims="channel",
+    )
+    priors = {
+        "lam": hierarchical_lam,
+        "beta": Prior("HalfNormal", dims="channel"),
+    }
+    saturation = LogisticSaturation(priors=priors)
+
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import numpy as np
+import xarray as xr
+from pydantic import Field, InstanceOf, validate_call
+from pymc_extras.deserialize import deserialize
+from pymc_extras.prior import Prior
+from pytensor.xtensor import as_xtensor
+from pytensor.xtensor import math as ptxm
+
+from pymc_marketing.mmm.components.base import (
+    Transformation,
+)
+from pymc_marketing.mmm.transformers import (
+    hill_function,
+    hill_saturation_sigmoid,
+    inverse_scaled_logistic_saturation,
+    logistic_saturation,
+    michaelis_menten,
+    root_saturation,
+    tanh_saturation,
+    tanh_saturation_baselined,
+)
+from pymc_marketing.serialization import serialization
+
+
+class SaturationTransformation(Transformation):
+    """Subclass for all saturation transformations.
+
+    In order to use a custom saturation transformation, subclass and define:
+
+    - `function`: function to take x to contributions
+    - `default_priors`: default distributions for each parameter in function
+
+    By subclassing from this method, lift test integration will come for free!
+
+    Examples
+    --------
+    Make a non-saturating saturation transformation
+
+    .. code-block:: python
+
+        from pymc_marketing.mmm import SaturationTransformation
+        from pymc_extras.prior import Prior
+
+
+        def infinite_returns(x, b):
+            return b * x
+
+
+        class InfiniteReturns(SaturationTransformation):
+            function = infinite_returns
+            default_priors = {"b": Prior("HalfNormal")}
+
+    Make use of plotting capabilities to understand the transformation and its
+    priors
+
+    .. code-block:: python
+
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        saturation = InfiniteReturns()
+
+        rng = np.random.default_rng(0)
+
+        prior = saturation.sample_prior(random_seed=rng)
+        curve = saturation.sample_curve(prior)
+        saturation.plot_curve(curve, random_seed=rng)
+        plt.show()
+
+    """
+
+    prefix: str = "saturation"
+
+    requires_unscaled_input: bool = False
+    """Whether the saturation must receive raw (unscaled) channel inputs.
+
+    Most saturations operate on channel data divided by ``channel_scale``
+    (see :class:`~pymc_marketing.mmm.scaling.Scaling`).  A saturation that
+    sets this flag to ``True`` instead receives the *raw* channel data, and
+    the MMM forces ``channel_scale`` to one for those channels.  This is
+    required by scale-sensitive transformations such as
+    :class:`LogSaturation`, whose coefficients only carry their intended
+    interpretation (an elasticity) when the input is not rescaled.
+    """
+
+    @classmethod
+    def from_dict(cls, data: dict) -> SaturationTransformation:
+        """Reconstruct a saturation transformation from a dict."""
+        data = data.copy()
+        data.pop("__type__", None)
+
+        if "priors" in data:
+            data["priors"] = {k: deserialize(v) for k, v in data["priors"].items()}
+
+        return cls(**data)
+
+    @validate_call
+    def sample_curve(
+        self,
+        parameters: InstanceOf[xr.Dataset] | InstanceOf[xr.DataTree] = Field(
+            ..., description="Parameters of the saturation transformation."
+        ),
+        max_value: float = Field(1.0, gt=0, description="Maximum range value."),
+        num_points: int = Field(
+            100, gt=0, description="Number of points between 0 and max_value."
+        ),
+        **sample_prior_predictive_kwargs: Any,
+    ) -> xr.DataArray:
+        """Sample the curve of the saturation transformation given parameters.
+
+        Parameters
+        ----------
+        parameters : xr.Dataset
+            Dataset with the parameters of the saturation transformation.
+        max_value : float, optional
+            Maximum value of the curve, by default 1.0.
+        num_points : int, optional
+            Number of points between 0 and max_value, by default 100.
+        sample_prior_predictive_kwargs : Any
+            Pass kwargs to pm.sample_prior_predictive
+
+        Returns
+        -------
+        xr.DataArray
+            Curve of the saturation transformation.
+
+        """
+        x = np.linspace(0, max_value, num_points)
+
+        return self._sample_curve(
+            var_name="saturation",
+            parameters=parameters,
+            x=x,
+            coords={"x": x},
+            **sample_prior_predictive_kwargs,
+        )
+
+
+@serialization.register
+class LogisticSaturation(SaturationTransformation):
+    """Wrapper around logistic saturation function.
+
+    Multiplies :func:`pymc_marketing.mmm.transformers.logistic_saturation` by an extra
+    scaling parameter ``beta`` so the curve can reach an asymptote other than 1.
+
+    Parameters
+    ----------
+    lam : tensor
+        Steepness of the curve, as in :func:`logistic_saturation`. Default prior:
+        ``Prior("Gamma", alpha=3, beta=1)``.
+    beta : tensor
+        Asymptote that the saturated response approaches as the input grows. Default
+        prior: ``Prior("HalfNormal", sigma=2)``.
+
+    .. plot::
+        :context: close-figs
+
+        import matplotlib.pyplot as plt
+        import numpy as np
+        from pymc_marketing.mmm import LogisticSaturation
+
+        rng = np.random.default_rng(0)
+
+        adstock = LogisticSaturation()
+        prior = adstock.sample_prior(random_seed=rng)
+        curve = adstock.sample_curve(prior)
+        adstock.plot_curve(curve, random_seed=rng)
+        plt.show()
+
+    """
+
+    def function(self, x, lam, beta, *, dim: str | None = None):
+        """Logistic saturation function."""
+        return beta * logistic_saturation(x, lam)
+
+    default_priors = {
+        "lam": Prior("Gamma", alpha=3, beta=1),
+        "beta": Prior("HalfNormal", sigma=2),
+    }
+
+
+@serialization.register
+class InverseScaledLogisticSaturation(SaturationTransformation):
+    """Wrapper around inverse scaled logistic saturation function.
+
+    Multiplies :func:`pymc_marketing.mmm.transformers.inverse_scaled_logistic_saturation`
+    by an extra scaling parameter ``beta`` so the curve can reach an asymptote other
+    than 1.
+
+    Parameters
+    ----------
+    lam : tensor
+        Half-saturation point of the curve (when ``eps`` keeps its default value).
+        Default prior: ``Prior("Gamma", alpha=0.5, beta=1)``.
+    beta : tensor
+        Asymptote that the saturated response approaches as the input grows. Default
+        prior: ``Prior("HalfNormal", sigma=2)``.
+
+    .. plot::
+        :context: close-figs
+
+        import matplotlib.pyplot as plt
+        import numpy as np
+        from pymc_marketing.mmm import InverseScaledLogisticSaturation
+
+        rng = np.random.default_rng(0)
+
+        adstock = InverseScaledLogisticSaturation()
+        prior = adstock.sample_prior(random_seed=rng)
+        curve = adstock.sample_curve(prior)
+        adstock.plot_curve(curve, random_seed=rng)
+        plt.show()
+
+    """
+
+    def function(self, x, lam, beta, *, dim: str | None = None):
+        """Inverse scaled logistic saturation function."""
+        return beta * inverse_scaled_logistic_saturation(x, lam)
+
+    default_priors = {
+        "lam": Prior("Gamma", alpha=0.5, beta=1),
+        "beta": Prior("HalfNormal", sigma=2),
+    }
+
+
+@serialization.register
+class TanhSaturation(SaturationTransformation):
+    """Wrapper around tanh saturation function.
+
+    Calls :func:`pymc_marketing.mmm.transformers.tanh_saturation` directly. The
+    saturation level is already exposed by the underlying function as ``b``, so no
+    extra scaling parameter is added at this layer.
+
+    Parameters
+    ----------
+    b : tensor
+        Saturation point, the asymptote that the response approaches. Default prior:
+        ``Prior("HalfNormal", sigma=1)``.
+    c : tensor
+        Initial cost per user; larger values give a less efficient channel. Must be
+        non-zero. Default prior: ``Prior("HalfNormal", sigma=1)``.
+
+    .. plot::
+        :context: close-figs
+
+        import matplotlib.pyplot as plt
+        import numpy as np
+        from pymc_marketing.mmm import TanhSaturation
+
+        rng = np.random.default_rng(0)
+
+        adstock = TanhSaturation()
+        prior = adstock.sample_prior(random_seed=rng)
+        curve = adstock.sample_curve(prior)
+        adstock.plot_curve(curve, random_seed=rng)
+        plt.show()
+
+    """
+
+    def function(self, x, b, c, *, dim: str | None = None):
+        """Tanh saturation function."""
+        return tanh_saturation(x, b, c)
+
+    default_priors = {
+        "b": Prior("HalfNormal", sigma=1),
+        "c": Prior("HalfNormal", sigma=1),
+    }
+
+
+@serialization.register
+class TanhSaturationBaselined(SaturationTransformation):
+    """Wrapper around tanh saturation function.
+
+    Multiplies :func:`pymc_marketing.mmm.transformers.tanh_saturation_baselined` by an
+    extra scaling parameter ``beta`` so the response can reach an asymptote other
+    than the gain-implied one.
+
+    Parameters
+    ----------
+    x0 : tensor
+        Reference point on the input scale, as in :func:`tanh_saturation_baselined`.
+        Default prior: ``Prior("HalfNormal", sigma=1)``.
+    gain : tensor
+        Value of the curve at ``x0`` divided by ``x0`` (the ROAS at the baseline).
+        Default prior: ``Prior("HalfNormal", sigma=1)``.
+    r : tensor
+        Overspend fraction, the ratio of the response at ``x0`` to the saturation
+        level. Default prior: ``Prior("HalfNormal", sigma=1)``.
+    beta : tensor
+        Scaling factor applied to the baselined-tanh response (multiplies the
+        gain-implied asymptote ``gain * x0 / r``). Default prior:
+        ``Prior("HalfNormal", sigma=1)``.
+
+    .. plot::
+        :context: close-figs
+
+        import matplotlib.pyplot as plt
+        import numpy as np
+        from pymc_marketing.mmm import TanhSaturationBaselined
+
+        rng = np.random.default_rng(0)
+
+        adstock = TanhSaturationBaselined()
+        prior = adstock.sample_prior(random_seed=rng)
+        curve = adstock.sample_curve(prior)
+        adstock.plot_curve(curve, random_seed=rng)
+        plt.show()
+
+    """
+
+    def function(self, x, x0, gain, r, beta, *, dim: str | None = None):
+        """Tanh saturation function."""
+        return beta * tanh_saturation_baselined(x, x0, gain, r)
+
+    default_priors = {
+        "x0": Prior("HalfNormal", sigma=1),
+        "gain": Prior("HalfNormal", sigma=1),
+        "r": Prior("HalfNormal", sigma=1),
+        "beta": Prior("HalfNormal", sigma=1),
+    }
+
+
+@serialization.register
+class MichaelisMentenSaturation(SaturationTransformation):
+    """Wrapper around Michaelis-Menten saturation function.
+
+    Calls :func:`pymc_marketing.mmm.transformers.michaelis_menten` directly. The
+    saturation level is exposed by the underlying function as ``alpha``, so no extra
+    scaling parameter is added at this layer.
+
+    Parameters
+    ----------
+    alpha : tensor
+        Maximum contribution, the asymptote that the response approaches. Default
+        prior: ``Prior("Gamma", mu=2, sigma=1)``.
+    lam : tensor
+        Half-saturation point on the input axis. Default prior:
+        ``Prior("HalfNormal", sigma=1)``.
+
+    .. plot::
+        :context: close-figs
+
+        import matplotlib.pyplot as plt
+        import numpy as np
+        from pymc_marketing.mmm import MichaelisMentenSaturation
+
+        rng = np.random.default_rng(0)
+
+        adstock = MichaelisMentenSaturation()
+        prior = adstock.sample_prior(random_seed=rng)
+        curve = adstock.sample_curve(prior)
+        adstock.plot_curve(curve, random_seed=rng)
+        plt.show()
+
+    """
+
+    def function(self, x, alpha, lam, *, dim: str | None = None):
+        """Michaelis-Menten saturation function."""
+        return michaelis_menten(x, alpha, lam)
+
+    default_priors = {
+        "alpha": Prior("Gamma", mu=2, sigma=1),
+        "lam": Prior("HalfNormal", sigma=1),
+    }
+
+
+@serialization.register
+class HillSaturation(SaturationTransformation):
+    """Wrapper around Hill saturation function.
+
+    Multiplies :func:`pymc_marketing.mmm.transformers.hill_function` by an extra
+    scaling parameter ``beta`` so the curve can reach an asymptote other than 1.
+
+    Parameters
+    ----------
+    slope : tensor
+        Slope of the Hill curve, controlling its steepness. Default prior:
+        ``Prior("HalfNormal", sigma=1.5)``.
+    kappa : tensor
+        Half-saturation point where the response equals half its asymptote. Default
+        prior: ``Prior("HalfNormal", sigma=1.5)``.
+    beta : tensor
+        Asymptote that the saturated response approaches as the input grows. Default
+        prior: ``Prior("HalfNormal", sigma=1.5)``.
+
+    .. plot::
+        :context: close-figs
+
+        import matplotlib.pyplot as plt
+        import numpy as np
+        from pymc_marketing.mmm import HillSaturation
+
+        rng = np.random.default_rng(0)
+
+        adstock = HillSaturation()
+        prior = adstock.sample_prior(random_seed=rng)
+        curve = adstock.sample_curve(prior)
+        adstock.plot_curve(curve, random_seed=rng)
+        plt.show()
+
+    """
+
+    def function(self, x, slope, kappa, beta, *, dim: str | None = None):
+        """Hill saturation function."""
+        return beta * hill_function(x, slope, kappa)
+
+    default_priors = {
+        "slope": Prior("HalfNormal", sigma=1.5),
+        "kappa": Prior("HalfNormal", sigma=1.5),
+        "beta": Prior("HalfNormal", sigma=1.5),
+    }
+
+
+@serialization.register
+class HillSaturationSigmoid(SaturationTransformation):
+    """Wrapper around Hill saturation sigmoid function.
+
+    Calls :func:`pymc_marketing.mmm.transformers.hill_saturation_sigmoid` directly. The
+    saturation level is exposed by the underlying function as ``sigma``, so no extra
+    scaling parameter is added at this layer. Note that ``beta`` here is the slope of
+    the sigmoid, not a scaling factor.
+
+    Parameters
+    ----------
+    sigma : tensor
+        Upper-asymptote parameter (approximate; the true maximum is
+        ``sigma * (1 - 1 / (1 + exp(beta * lam)))``, see
+        :func:`hill_saturation_sigmoid`). Default prior:
+        ``Prior("HalfNormal", sigma=1.5)``.
+    beta : tensor
+        Slope of the sigmoid, controlling the steepness of the transition. Default
+        prior: ``Prior("HalfNormal", sigma=1.5)``.
+    lam : tensor
+        Midpoint of the transition on the input axis. Default prior:
+        ``Prior("HalfNormal", sigma=1.5)``.
+
+    .. plot::
+        :context: close-figs
+
+        import matplotlib.pyplot as plt
+        import numpy as np
+        from pymc_marketing.mmm import HillSaturationSigmoid
+
+        rng = np.random.default_rng(0)
+
+        adstock = HillSaturationSigmoid()
+        prior = adstock.sample_prior(random_seed=rng)
+        curve = adstock.sample_curve(prior)
+        adstock.plot_curve(curve, random_seed=rng)
+        plt.show()
+
+    """
+
+    def function(self, x, sigma, beta, lam, *, dim: str | None = None):
+        """Hill sigmoid function."""
+        return hill_saturation_sigmoid(x, sigma, beta, lam)
+
+    default_priors = {
+        "sigma": Prior("HalfNormal", sigma=1.5),
+        "beta": Prior("HalfNormal", sigma=1.5),
+        "lam": Prior("HalfNormal", sigma=1.5),
+    }
+
+
+@serialization.register
+class RootSaturation(SaturationTransformation):
+    """Wrapper around Root saturation function.
+
+    Multiplies :func:`pymc_marketing.mmm.transformers.root_saturation` by an extra
+    scaling parameter ``beta``.
+
+    Parameters
+    ----------
+    alpha : tensor
+        Exponent applied to the input by :func:`root_saturation`. Default prior:
+        ``Prior("Beta", alpha=1, beta=2)``.
+    beta : tensor
+        Scaling factor applied to the root-transformed input. Default prior:
+        ``Prior("Gamma", mu=1, sigma=1)``.
+
+    .. plot::
+        :context: close-figs
+
+        import matplotlib.pyplot as plt
+        import numpy as np
+        from pymc_marketing.mmm import RootSaturation
+
+        rng = np.random.default_rng(0)
+
+        saturation = RootSaturation()
+        prior = saturation.sample_prior(random_seed=rng)
+        curve = saturation.sample_curve(prior)
+        saturation.plot_curve(curve, random_seed=rng)
+        plt.show()
+
+    """
+
+    def function(self, x, alpha, beta, *, dim: str | None = None):
+        """Root saturation function."""
+        return beta * root_saturation(x, alpha)
+
+    default_priors = {
+        "alpha": Prior("Beta", alpha=1, beta=2),
+        "beta": Prior("Gamma", mu=1, sigma=1),
+    }
+
+
+@serialization.register
+class LogSaturation(SaturationTransformation):
+    r"""Logarithmic saturation for log-log models.
+
+    Applies :math:`\beta \, \log(1 + x)` to the **raw** (unscaled) channel
+    input, mapping spend through a concave logarithmic curve with
+    diminishing returns.
+
+    When combined with ``link="log"`` in the MMM, the model becomes a
+    log-log specification and :math:`\beta` is an approximate
+    *elasticity* -- the percentage change in the response per one percent
+    change in spend.  For this interpretation to hold, the channel input
+    must **not** be rescaled: an elasticity is dimensionless, so dividing
+    spend by an arbitrary ``channel_scale`` would change :math:`\beta`
+    (because :math:`\log(1 + x)` is not invariant under multiplicative
+    rescaling of :math:`x`).  This class therefore sets
+    :attr:`~SaturationTransformation.requires_unscaled_input` to ``True``,
+    which makes the MMM feed raw spend to the saturation and force
+    ``channel_scale = 1`` for the affected channels.
+
+    ``log(1 + x)`` (rather than ``log(x)``) is used so that the transform
+    is finite at ``x = 0`` -- common for paused or cold-start channels --
+    while remaining numerically indistinguishable from ``log(x)`` once
+    spend is large, where the elasticity interpretation is exact in the
+    limit :math:`\partial \log y / \partial \log x \to \beta`.
+
+    .. plot::
+        :context: close-figs
+
+        import matplotlib.pyplot as plt
+        import numpy as np
+        from pymc_marketing.mmm import LogSaturation
+
+        rng = np.random.default_rng(0)
+
+        saturation = LogSaturation()
+        prior = saturation.sample_prior(random_seed=rng)
+        curve = saturation.sample_curve(prior)
+        saturation.plot_curve(curve, random_seed=rng)
+        plt.show()
+
+    """
+
+    requires_unscaled_input: bool = True
+
+    def function(self, x, beta, *, dim: str | None = None):
+        """Logarithmic saturation function: beta * log(1 + x)."""
+        x = as_xtensor(x)
+        beta = as_xtensor(beta)
+        return beta * ptxm.log1p(x)
+
+    default_priors = {"beta": Prior("HalfNormal", sigma=1)}
+
+
+@serialization.register
+class NoSaturation(SaturationTransformation):
+    """Wrapper around linear saturation function.
+
+    Identity-like transformation that returns ``beta * x``. Useful when a channel
+    should not be saturated but still needs a learned coefficient.
+
+    Parameters
+    ----------
+    beta : tensor
+        Slope of the linear response. Default prior:
+        ``Prior("HalfNormal", sigma=1)``.
+
+    .. plot::
+        :context: close-figs
+
+        import matplotlib.pyplot as plt
+        import numpy as np
+        from pymc_marketing.mmm import NoSaturation
+
+        rng = np.random.default_rng(0)
+
+        saturation = NoSaturation()
+        prior = saturation.sample_prior(random_seed=rng)
+        curve = saturation.sample_curve(prior)
+        saturation.plot_curve(curve, random_seed=rng)
+        plt.show()
+
+    """
+
+    def function(self, x, beta, *, dim: str | None = None):
+        """Linear saturation function."""
+        x = as_xtensor(x)
+        beta = as_xtensor(beta)
+        return beta * x
+
+    default_priors = {"beta": Prior("HalfNormal", sigma=1)}

@@ -1,0 +1,89 @@
+#################################################################################
+# GLOBALS                                                                       #
+#################################################################################
+
+PACKAGE_DIR = pymc_marketing
+
+#################################################################################
+# COMMANDS                                                                      #
+#################################################################################
+
+.PHONY: init lint check_lint format check_format test html cleandocs run_notebooks uml linkcheck help
+
+init: ## Install the package in editable mode
+	uv sync
+
+lint: ## Install linting dependencies and run linter (ruff and mypy)
+	uv sync --extra lint
+	uv run ruff check $(PACKAGE_DIR) --fix
+	uv run mypy .
+
+check_lint: ## Install linting dependencies and check linting (ruff and mypy)
+	uv sync --extra lint
+	uv run ruff check $(PACKAGE_DIR)
+	uv run mypy .
+
+format: ## Install linting dependencies and format code (ruff)
+	uv sync --extra lint
+	uv run ruff format $(PACKAGE_DIR)
+
+check_format: ## Install linting dependencies and check code formatting (ruff)
+	uv sync --extra lint
+	uv run ruff format --check $(PACKAGE_DIR)
+
+test:  ## Install test dependencies and run tests
+	uv sync --extra test
+	uv run pytest
+
+html: ## Install documentation dependencies and build HTML docs
+	uv sync --extra docs
+	uv run python scripts/generate_gallery.py
+	uv run sphinx-build docs/source docs/build -b html
+
+cleandocs: ## Clean the documentation build directories
+	rm -r "docs/build" "docs/jupyter_execute" "docs/source/api/generated"
+
+# Reproduce the GH Actions `Docs` workflow locally. Fails on any
+# sphinx/myst/numpydoc warning (-W). --keep-going collects every warning
+# before failing so contributors see the full list.
+check_docs: ## Build docs treating warnings as errors (matches CI)
+	uv sync --extra docs
+	uv run python scripts/generate_gallery.py --check --no-thumbnails
+	uv run sphinx-build docs/source docs/build -b html -W --keep-going 2> docs_warnings.log; \
+	  status=$$?; \
+	  warnings=$$(grep -cE 'WARNING|ERROR' docs_warnings.log || echo 0); \
+	  echo "Docs warnings/errors: $$warnings (see docs_warnings.log)"; \
+	  exit $$status
+
+run_notebooks: ## Run Jupyter notebooks
+	uv run python scripts/run_notebooks/runner.py
+
+run_notebooks_mmm: ## Run MMM Jupyter notebooks only
+	uv run python scripts/run_notebooks/runner.py --exclude-dirs clv bass customer_choice general
+
+run_notebooks_other: ## Run non-MMM Jupyter notebooks
+	uv run python scripts/run_notebooks/runner.py --exclude-dirs mmm
+
+uml: ## Install documentation dependencies and generate UML diagrams
+	uv sync --extra docs
+	uv run pyreverse pymc_marketing/mmm -d docs/source/uml -f 'ALL' -o png -p mmm
+	uv run pyreverse pymc_marketing/clv -d docs/source/uml -f 'ALL' -o png -p clv
+	uv run pyreverse pymc_marketing/customer_choice -d docs/source/uml -f 'ALL' -o png -p customer_choice
+
+linkcheck: ## Check documentation links with Sphinx
+	uv sync --extra docs
+	uv run sphinx-build docs/source docs/build -b linkcheck
+
+mlflow_server: ## Start MLflow server on port 5000
+	uv run mlflow server --backend-store-uri sqlite:///mlruns.db --default-artifact-root ./mlruns
+
+
+#################################################################################
+# Self Documenting Commands                                                     #
+#################################################################################
+
+.DEFAULT_GOAL := help
+
+help: ## Show this help message
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+	awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'

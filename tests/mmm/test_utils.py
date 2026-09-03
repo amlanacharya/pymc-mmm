@@ -1,0 +1,1472 @@
+#   Copyright 2022 - 2026 The PyMC Labs Developers
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+
+import logging
+import warnings
+
+import numpy as np
+import pandas as pd
+import pymc as pm
+import pytest
+import xarray as xr
+from pytensor.compile.mode import Mode
+from sklearn.preprocessing import MaxAbsScaler
+
+from pymc_marketing.mmm.additive_effect import IncrementalitySpec
+from pymc_marketing.mmm.utils import (
+    _convert_frequency_to_timedelta,
+    add_noise_to_channel_allocation,
+    apply_sklearn_transformer_across_dim,
+    build_contributions,
+    create_index,
+    create_new_spend_data,
+    create_zero_dataset,
+    transform_1d_array,
+)
+
+
+@pytest.fixture
+def mock_method():
+    def _mock_method(x):
+        if x.ndim != 2:
+            raise ValueError("x must be 2-dimensional")
+
+        return x * 2
+
+    return _mock_method
+
+
+@pytest.fixture
+def create_mock_mmm_return_data():
+    def _create_mock_mm_return_data(combined: bool) -> xr.DataArray:
+        dates = pd.date_range(start="2020-01-01", end="2020-01-31", freq="W-MON")
+        data = xr.DataArray(
+            np.ones(shape=(1, 3, len(dates), 2)),
+            coords={
+                "chain": [1],
+                "draw": [1, 2, 3],
+                "date": dates,
+                "channel": ["channel1", "channel2"],
+            },
+        )
+
+        if combined:
+            data = data.stack(sample=("chain", "draw"))
+
+        return data
+
+    return _create_mock_mm_return_data
+
+
+@pytest.mark.parametrize("combined", [True, False])
+def test_apply_sklearn_function_across_dim(
+    mock_method, create_mock_mmm_return_data, combined: bool
+) -> None:
+    # Data that would be returned from a MMM model
+    data = create_mock_mmm_return_data(combined=combined)
+    result = apply_sklearn_transformer_across_dim(
+        data,
+        mock_method,
+        dim_name="date",
+    )
+
+    xr.testing.assert_allclose(result, data * 2)
+
+
+@pytest.mark.parametrize("constructor", [pd.Series, np.array])
+def test_transform_1d_array(constructor):
+    transform = MaxAbsScaler()
+    y = constructor([1, 2, 3, 4, 5])
+    transform.fit(np.array(y)[:, None])
+    expected = np.array([1, 2, 3, 4, 5]) / 5
+    result = transform_1d_array(transform.transform, y)
+    np.testing.assert_allclose(result, expected)
+
+
+@pytest.mark.parametrize(
+    "spend, adstock_max_lag, one_time, spend_leading_up, expected_result",
+    [
+        (
+            [1, 2],
+            2,
+            True,
+            None,
+            [[0, 0], [0, 0], [1, 2], [0, 0], [0, 0]],
+        ),
+        (
+            [1, 2],
+            2,
+            False,
+            None,
+            [[0, 0], [0, 0], [1, 2], [1, 2], [1, 2]],
+        ),
+        (
+            [1, 2],
+            2,
+            True,
+            [3, 4],
+            [[3, 4], [3, 4], [1, 2], [0, 0], [0, 0]],
+        ),
+    ],
+)
+def test_create_new_spend_data(
+    spend, adstock_max_lag, one_time, spend_leading_up, expected_result
+) -> None:
+    spend = np.array(spend)
+    if spend_leading_up is not None:
+        spend_leading_up = np.array(spend_leading_up)
+    new_spend_data = create_new_spend_data(
+        spend, adstock_max_lag, one_time, spend_leading_up
+    )
+
+    np.testing.assert_allclose(
+        new_spend_data,
+        np.array(expected_result),
+    )
+
+
+def test_create_new_spend_data_value_errors() -> None:
+    with pytest.raises(
+        ValueError, match=r"spend_leading_up must be the same length as the spend"
+    ):
+        create_new_spend_data(
+            spend=np.array([1, 2]),
+            adstock_max_lag=2,
+            one_time=True,
+            spend_leading_up=np.array([3, 4, 5]),
+        )
+
+
+def test_add_noise_to_channel_allocation():
+    # Create a simple DataFrame with channel data
+    df = pd.DataFrame(
+        {
+            "channel1": [10, 20, 30, 40, 50],
+            "channel2": [5, 10, 15, 20, 25],
+            "target": [100, 200, 300, 400, 500],
+        }
+    )
+
+    channels = ["channel1", "channel2"]
+
+    # Test with fixed seed for reproducibility
+    result = add_noise_to_channel_allocation(df, channels, rel_std=0.1, seed=42)
+
+    # Check that the DataFrame was not modified in place
+    pd.testing.assert_frame_equal(
+        df,
+        pd.DataFrame(
+            {
+                "channel1": [10, 20, 30, 40, 50],
+                "channel2": [5, 10, 15, 20, 25],
+                "target": [100, 200, 300, 400, 500],
+            }
+        ),
+    )
+
+    # Check that noise was added (values changed)
+    assert not np.allclose(df[channels].values, result[channels].values)
+
+    # Check that non-channel columns remain unchanged
+    np.testing.assert_array_equal(df["target"].values, result["target"].values)
+
+    # Check that noise is centered around original values (approximately)
+    # The means should be close with small sample size
+    assert np.abs(df["channel1"].mean() - result["channel1"].mean()) < 5
+    assert np.abs(df["channel2"].mean() - result["channel2"].mean()) < 3
+
+    # Test no negative values
+    assert (result[channels] >= 0).all().all(), "No negative values in channels"
+
+
+class FakeMMM:
+    def __init__(self):
+        # Create a simple dataset
+        dates = pd.date_range("2022-01-01", "2022-01-31", freq="D")
+        self.X = pd.DataFrame(
+            {
+                "date": dates,
+                "region": ["A"] * 15 + ["B"] * 16,
+                "channel1": np.random.rand(31) * 10,
+                "channel2": np.random.rand(31) * 5,
+                "control1": np.random.rand(31),
+                "extra_col": np.ones(31),
+            }
+        )
+        self.date_column = "date"
+        self.channel_columns = ["channel1", "channel2"]
+        self.control_columns = ["control1"]
+        self.dims = ["region"]
+        self.xarray_dataset = xr.Dataset(
+            coords={
+                "date": pd.date_range("2022-01-01", "2022-01-31", freq="D"),
+                "region": ["A", "B"],
+            }
+        )
+
+        # Add a fake adstock object with l_max attribute
+        class FakeAdstock:
+            l_max = 7  # Example adstock lag
+
+        self.adstock = FakeAdstock()
+
+
+def test_create_zero_dataset():
+    # Create a fake model
+    model = FakeMMM()
+
+    # Test basic zero dataset
+    start_date = "2022-02-01"
+    end_date = "2022-02-10"
+    result = create_zero_dataset(model, start_date, end_date)
+
+    # Check results
+    assert isinstance(result, xr.Dataset)
+    # With l_max=7, the function adds 7 days to the end date
+    # So we get 17 days (Feb 1 to Feb 17) * 2 regions
+    assert len(result.coords["date"]) == 17  # 17 days
+    assert len(result.coords["region"]) == 2  # 2 regions
+    assert set(result.data_vars) == {"_channel", "_control"}
+    assert np.all(result["_channel"].values == 0)
+    assert np.all(result["_control"].values == 0)
+
+    # Test with channel_xr
+    # Create a simple xarray Dataset with channel values
+    region_coords = np.array(["A", "B"])
+    channel_values = xr.Dataset(
+        data_vars={
+            "channel1": (["region"], np.array([5.0, 7.0])),
+        },
+        coords={"region": region_coords},
+    )
+
+    result_with_channels = create_zero_dataset(
+        model, start_date, end_date, channel_values
+    )
+
+    # Check results
+    assert np.all(
+        result_with_channels["_channel"].sel(region="A", channel="channel1") == 5.0
+    )
+    assert np.all(
+        result_with_channels["_channel"].sel(region="B", channel="channel1") == 7.0
+    )
+    assert np.all(
+        result_with_channels["_channel"].sel(channel="channel2") == 0
+    )  # Not provided in channel_xr
+
+
+@pytest.mark.parametrize(
+    "dims, take, expected_result",
+    [
+        pytest.param(
+            ("date",),
+            ("date",),
+            (slice(None),),
+            id="empty-slice",
+        ),
+        pytest.param(
+            ("date", "product", "geo"),
+            ("date", "geo"),
+            (slice(None), 0, slice(None)),
+            id="drop-product",
+        ),
+        pytest.param(
+            ("date", "product", "geo"),
+            ("date",),
+            (slice(None), 0, 0),
+            id="drop-both",
+        ),
+    ],
+)
+def test_create_index(dims, take, expected_result):
+    assert create_index(dims, take) == expected_result
+
+
+class TestConvertFrequencyToTimedelta:
+    """Test cases for _convert_frequency_to_timedelta function."""
+
+    @pytest.mark.parametrize(
+        "periods, freq, expected",
+        [
+            # Daily frequencies
+            (1, "D", pd.Timedelta(days=1)),
+            (7, "D", pd.Timedelta(days=7)),
+            (0, "D", pd.Timedelta(days=0)),
+            # Weekly frequencies
+            (1, "W", pd.Timedelta(weeks=1)),
+            (4, "W", pd.Timedelta(weeks=4)),
+            (1, "W-MON", pd.Timedelta(weeks=1)),  # Complex frequency string
+            (2, "W-SUN", pd.Timedelta(weeks=2)),
+            # Monthly frequencies (approximated as 30 days)
+            (1, "M", pd.Timedelta(days=30)),
+            (3, "M", pd.Timedelta(days=90)),
+            (12, "M", pd.Timedelta(days=360)),
+            # Yearly frequencies (approximated as 365 days)
+            (1, "Y", pd.Timedelta(days=365)),
+            (2, "Y", pd.Timedelta(days=730)),
+            # Hourly frequencies
+            (1, "H", pd.Timedelta(hours=1)),
+            (24, "H", pd.Timedelta(hours=24)),
+            # Minute frequencies
+            (1, "T", pd.Timedelta(minutes=1)),
+            (60, "T", pd.Timedelta(minutes=60)),
+            # Second frequencies
+            (1, "S", pd.Timedelta(seconds=1)),
+            (3600, "S", pd.Timedelta(seconds=3600)),
+        ],
+    )
+    def test_supported_frequencies(self, periods, freq, expected):
+        """Test conversion of supported frequency strings."""
+        result = _convert_frequency_to_timedelta(periods, freq)
+        assert result == expected
+
+    def test_unrecognized_frequency_with_warning(self):
+        """Test that unrecognized frequencies default to weeks and issue a warning."""
+        with pytest.warns(
+            UserWarning, match=r"Unrecognized frequency 'XYZ'. Defaulting to weeks."
+        ):
+            result = _convert_frequency_to_timedelta(2, "XYZ")
+            expected = pd.Timedelta(weeks=2)
+            assert result == expected
+
+    def test_single_character_frequencies(self):
+        """Test single character frequency strings."""
+        assert _convert_frequency_to_timedelta(5, "D") == pd.Timedelta(days=5)
+        assert _convert_frequency_to_timedelta(3, "W") == pd.Timedelta(weeks=3)
+        assert _convert_frequency_to_timedelta(2, "M") == pd.Timedelta(days=60)
+
+    def test_complex_frequency_strings(self):
+        """Test that complex frequency strings are parsed correctly."""
+        # Should extract base frequency 'W' from 'W-MON', 'W-TUE', etc.
+        assert _convert_frequency_to_timedelta(1, "W-MON") == pd.Timedelta(weeks=1)
+        assert _convert_frequency_to_timedelta(1, "W-TUE") == pd.Timedelta(weeks=1)
+        assert _convert_frequency_to_timedelta(1, "W-WED") == pd.Timedelta(weeks=1)
+        assert _convert_frequency_to_timedelta(1, "W-THU") == pd.Timedelta(weeks=1)
+        assert _convert_frequency_to_timedelta(1, "W-FRI") == pd.Timedelta(weeks=1)
+        assert _convert_frequency_to_timedelta(1, "W-SAT") == pd.Timedelta(weeks=1)
+        assert _convert_frequency_to_timedelta(1, "W-SUN") == pd.Timedelta(weeks=1)
+
+    def test_edge_cases(self):
+        """Test edge cases like zero periods and negative periods."""
+        assert _convert_frequency_to_timedelta(0, "D") == pd.Timedelta(days=0)
+        assert _convert_frequency_to_timedelta(0, "W") == pd.Timedelta(weeks=0)
+
+
+class TestCreateZeroDataset:
+    """Extended test cases for create_zero_dataset function."""
+
+    def test_create_zero_dataset_basic(self):
+        """Test basic functionality of create_zero_dataset."""
+        model = FakeMMM()
+        start_date = "2022-02-01"
+        end_date = "2022-02-10"
+
+        result = create_zero_dataset(model, start_date, end_date)
+
+        # Check basic properties
+        assert isinstance(result, xr.Dataset)
+        assert list(result.data_vars) == ["_channel", "_control"]
+        assert result["_channel"].dims == ("date", "region", "channel")
+        assert np.all(result["_channel"].values == 0)
+        assert result["_control"].dims == ("date", "region", "control")
+        assert np.all(result["_control"].values == 0)
+
+        # Check that we have data for both regions
+        assert set(result.coords["region"].values) == {"A", "B"}
+
+    def test_create_zero_dataset_with_channel_xr_dataset(self):
+        """Test create_zero_dataset with channel_xr as xarray Dataset."""
+        model = FakeMMM()
+        start_date = "2022-02-01"
+        end_date = "2022-02-10"
+
+        # Create channel values as Dataset
+        channel_values = xr.Dataset(
+            data_vars={
+                "channel1": (["region"], np.array([5.0, 7.0])),
+                "channel2": (["region"], np.array([3.0, 4.0])),
+            },
+            coords={"region": np.array(["A", "B"])},
+        )
+
+        result = create_zero_dataset(model, start_date, end_date, channel_values)
+
+        # Check channel values are set correctly
+        assert np.all(
+            result["_channel"].sel(region="A", channel="channel1").values == 5.0
+        )
+        assert np.all(
+            result["_channel"].sel(region="B", channel="channel1").values == 7.0
+        )
+        assert np.all(
+            result["_channel"].sel(region="A", channel="channel2").values == 3.0
+        )
+        assert np.all(
+            result["_channel"].sel(region="B", channel="channel2").values == 4.0
+        )
+
+    def test_create_zero_dataset_with_channel_xr_dataarray(self):
+        """Test create_zero_dataset with channel_xr as xarray DataArray."""
+        model = FakeMMM()
+        start_date = "2022-02-01"
+        end_date = "2022-02-10"
+
+        # Create channel values as DataArray
+        channel_array = xr.DataArray(
+            data=np.array([10.0, 12.0]),
+            dims=["region"],
+            coords={"region": np.array(["A", "B"])},
+            name="channel1",
+        )
+
+        result = create_zero_dataset(model, start_date, end_date, channel_array)
+
+        # Check channel values are set correctly
+        assert np.all(
+            result["_channel"].sel(region="A", channel="channel1").values == 10.0
+        )
+        assert np.all(
+            result["_channel"].sel(region="B", channel="channel1").values == 12.0
+        )
+        assert np.all(
+            result["_channel"].sel(channel="channel2").values == 0
+        )  # Not provided
+
+    def test_create_zero_dataset_include_carryover_false(self):
+        """Test create_zero_dataset with include_carryover=False."""
+        model = FakeMMM()
+        start_date = "2022-02-01"
+        end_date = "2022-02-10"
+
+        result_without_carryover = create_zero_dataset(
+            model, start_date, end_date, include_carryover=False
+        )
+        result_with_carryover = create_zero_dataset(
+            model, start_date, end_date, include_carryover=True
+        )
+
+        # Without carryover should have fewer dates (no l_max extension)
+        assert len(result_without_carryover.coords["date"]) < len(
+            result_with_carryover.coords["date"]
+        )
+
+        # Without carryover: 10 days
+        assert len(result_without_carryover.coords["date"]) == 10
+
+        # With carryover: (10 + 7) days = 17
+        assert len(result_with_carryover.coords["date"]) == 17
+
+    def test_create_zero_dataset_with_timestamps(self):
+        """Test create_zero_dataset with pd.Timestamp inputs."""
+        model = FakeMMM()
+        start_date = pd.Timestamp("2022-02-01")
+        end_date = pd.Timestamp("2022-02-10")
+
+        result = create_zero_dataset(model, start_date, end_date)
+
+        assert isinstance(result, xr.Dataset)
+        assert len(result.coords["date"]) > 0
+
+    def test_create_zero_dataset_missing_channels_warning(self):
+        """Test warning when channel_xr doesn't supply all channels."""
+        model = FakeMMM()
+        start_date = "2022-02-01"
+        end_date = "2022-02-10"
+
+        # Only provide values for channel1, not channel2
+        channel_values = xr.Dataset(
+            data_vars={"channel1": (["region"], np.array([5.0, 7.0]))},
+            coords={"region": np.array(["A", "B"])},
+        )
+
+        with pytest.warns(
+            UserWarning, match=r"does not supply values for \['channel2'\]"
+        ):
+            result = create_zero_dataset(model, start_date, end_date, channel_values)
+
+        # channel2 should still be 0
+        assert np.all(result["_channel"].sel(channel="channel2").values == 0)
+
+    def test_create_zero_dataset_error_cases(self):
+        """Test error cases for create_zero_dataset."""
+        model = FakeMMM()
+        start_date = "2022-02-01"
+        end_date = "2022-02-10"
+
+        # Test invalid channel_xr type
+        with pytest.raises(TypeError, match=r"must be an xarray Dataset or DataArray"):
+            create_zero_dataset(model, start_date, end_date, channel_xr="invalid")
+
+        # Test channel_xr with invalid variables
+        invalid_channel_xr = xr.Dataset(
+            data_vars={"invalid_channel": (["region"], np.array([5.0, 7.0]))},
+            coords={"region": np.array(["A", "B"])},
+        )
+        with pytest.raises(ValueError, match=r"contains variables not in"):
+            create_zero_dataset(model, start_date, end_date, invalid_channel_xr)
+
+        # Test channel_xr with invalid dimensions
+        invalid_dims_xr = xr.Dataset(
+            data_vars={"channel1": (["invalid_dim"], np.array([5.0, 7.0]))},
+            coords={"invalid_dim": np.array(["A", "B"])},
+        )
+        with pytest.raises(ValueError, match=r"uses dims that are not recognised"):
+            create_zero_dataset(model, start_date, end_date, invalid_dims_xr)
+
+        # Test channel_xr with date dimension (not allowed)
+        date_dim_xr = xr.Dataset(
+            data_vars={
+                "channel1": (["region", "date"], np.array([[5.0], [7.0]])),
+            },
+            coords={
+                "region": np.array(["A", "B"]),
+                "date": pd.date_range("2022-01-01", periods=1),
+            },
+        )
+        # The date dimension check is caught by the unrecognized dims check first
+        with pytest.raises(
+            ValueError, match=r"uses dims that are not recognised model dims"
+        ):
+            create_zero_dataset(model, start_date, end_date, date_dim_xr)
+
+    def test_create_zero_dataset_channel_xr_includes_date_specific_error(self):
+        """Ensure we hit the explicit date-dimension error when date is an allowed model dim."""
+
+        class FakeMMM_DateDim:
+            def __init__(self):
+                dates = pd.date_range("2022-01-01", "2022-01-10", freq="D")
+                self.X = pd.DataFrame(
+                    {
+                        "date": dates,
+                        "channel1": np.random.rand(10) * 10,
+                        "channel2": np.random.rand(10) * 5,
+                    }
+                )
+                self.date_column = "date"
+                self.channel_columns = ["channel1", "channel2"]
+                self.control_columns = []
+                # Include 'date' as a model dim so the invalid-dims check passes,
+                # and we can assert on the specific date-dimension error.
+                self.dims = ["date"]
+                self.xarray_dataset = xr.Dataset(
+                    coords={
+                        "date": dates,
+                    }
+                )
+
+                class FakeAdstock:
+                    l_max = 1
+
+                self.adstock = FakeAdstock()
+
+        model = FakeMMM_DateDim()
+        start_date = "2022-02-01"
+        end_date = "2022-02-03"
+
+        channel_with_date = xr.Dataset(
+            data_vars={
+                "channel1": ("date", np.array([1.0, 2.0])),
+            },
+            coords={"date": pd.date_range("2022-01-01", periods=2, freq="D")},
+        )
+
+        with pytest.raises(
+            ValueError, match=r"`channel_xr` must NOT include the date dimension\."
+        ):
+            create_zero_dataset(model, start_date, end_date, channel_with_date)
+
+    def test_create_zero_dataset_no_dims(self):
+        """Test create_zero_dataset with a model that has no dimensions."""
+
+        class FakeMMM_NoDims:
+            def __init__(self):
+                dates = pd.date_range("2022-01-01", "2022-01-10", freq="D")
+                self.X = pd.DataFrame(
+                    {
+                        "date": dates,
+                        "channel1": np.random.rand(10) * 10,
+                        "channel2": np.random.rand(10) * 5,
+                    }
+                )
+                self.date_column = "date"
+                self.channel_columns = ["channel1", "channel2"]
+                self.control_columns = []
+                self.dims = []  # No dimensions
+                self.xarray_dataset = xr.Dataset(
+                    coords={
+                        "date": dates,
+                    }
+                )
+
+                class FakeAdstock:
+                    l_max = 3
+
+                self.adstock = FakeAdstock()
+
+        model = FakeMMM_NoDims()
+        start_date = "2022-02-01"
+        end_date = "2022-02-05"
+
+        result = create_zero_dataset(model, start_date, end_date)
+
+        # Should have (5 + 3) days = 8 dates (no cross-join with dimensions)
+        assert len(result.coords["date"]) == 8
+        assert "region" not in result.dims
+
+    def test_create_zero_dataset_empty_date_range_error(self):
+        """Test error when generated date range is empty."""
+        model = FakeMMM()
+        # Invalid date range (end before start)
+        start_date = "2022-02-10"
+        end_date = "2022-02-01"
+
+        with pytest.raises(ValueError, match=r"Generated date range is empty"):
+            create_zero_dataset(model, start_date, end_date)
+
+    def test_create_zero_dataset_channel_xr_no_dims_all_channels(self):
+        """Channel-only allocation: channel_xr is a 0-dim Dataset with per-channel scalars."""
+
+        class FakeMMM_NoDims:
+            def __init__(self):
+                dates = pd.date_range("2022-01-01", "2022-01-10", freq="D")
+                self.X = pd.DataFrame(
+                    {
+                        "date": dates,
+                        "channel1": np.random.rand(10) * 10,
+                        "channel2": np.random.rand(10) * 5,
+                    }
+                )
+                self.date_column = "date"
+                self.channel_columns = ["channel1", "channel2"]
+                self.control_columns = []
+                self.dims = []  # No dimensions
+                self.xarray_dataset = xr.Dataset(
+                    coords={
+                        "date": dates,
+                    }
+                )
+
+                class FakeAdstock:
+                    l_max = 3
+
+                self.adstock = FakeAdstock()
+
+        model = FakeMMM_NoDims()
+        start_date = "2022-02-01"
+        end_date = "2022-02-05"
+
+        # 0-dim Dataset: variables are channels with scalar values
+        channel_values = xr.Dataset(
+            data_vars={
+                "channel1": 100.0,
+                "channel2": 200.0,
+            }
+        )
+
+        result = create_zero_dataset(model, start_date, end_date, channel_values)
+
+        # (5 + 3) days = 8 dates
+        assert len(result.coords["date"]) == 8
+        assert np.all(result["_channel"].sel(channel="channel1") == 100.0)
+        assert np.all(result["_channel"].sel(channel="channel2") == 200.0)
+
+    def test_create_zero_dataset_channel_xr_no_dims_missing_channel(self):
+        """Channel-only allocation with missing channel var should warn and leave others at 0."""
+
+        class FakeMMM_NoDims:
+            def __init__(self):
+                dates = pd.date_range("2022-01-01", "2022-01-10", freq="D")
+                self.X = pd.DataFrame(
+                    {
+                        "date": dates,
+                        "channel1": np.random.rand(10) * 10,
+                        "channel2": np.random.rand(10) * 5,
+                    }
+                )
+                self.date_column = "date"
+                self.channel_columns = ["channel1", "channel2"]
+                self.control_columns = []
+                self.dims = []
+                self.xarray_dataset = xr.Dataset(
+                    coords={
+                        "date": dates,
+                    }
+                )
+
+                class FakeAdstock:
+                    l_max = 2
+
+                self.adstock = FakeAdstock()
+
+        model = FakeMMM_NoDims()
+        start_date = "2022-02-01"
+        end_date = "2022-02-03"
+
+        # Provide only one channel as scalar variable in 0-dim Dataset
+        channel_values = xr.Dataset(
+            data_vars={
+                "channel1": 50.0,
+            }
+        )
+
+        with pytest.warns(
+            UserWarning, match=r"does not supply values for \['channel2'\]"
+        ):
+            result = create_zero_dataset(model, start_date, end_date, channel_values)
+
+        # (3 + 2) days = 5 dates
+        assert len(result.coords["date"]) == 5
+        assert np.all(result["_channel"].sel(channel="channel1") == 50.0)
+        assert np.all(result["_channel"].sel(channel="channel2") == 0.0)
+
+
+class TestBuildContributions:
+    """Test cases for build_contributions function."""
+
+    @pytest.fixture
+    def mock_idata_simple(self):
+        """Create simple InferenceData for testing build_contributions."""
+        dates = pd.date_range("2025-01-01", periods=10, freq="W-MON")
+        channels = ["C1", "C2"]
+
+        posterior = xr.Dataset(
+            {
+                "intercept_contribution": xr.DataArray(
+                    np.random.normal(size=(2, 50, 10)),
+                    dims=("chain", "draw", "date"),
+                    coords={
+                        "chain": [0, 1],
+                        "draw": np.arange(50),
+                        "date": dates,
+                    },
+                ),
+                "channel_contribution": xr.DataArray(
+                    np.random.normal(size=(2, 50, 10, 2)),
+                    dims=("chain", "draw", "date", "channel"),
+                    coords={
+                        "chain": [0, 1],
+                        "draw": np.arange(50),
+                        "date": dates,
+                        "channel": channels,
+                    },
+                ),
+            }
+        )
+        idata = xr.DataTree.from_dict({"/posterior": posterior})
+        return idata
+
+    @pytest.fixture
+    def mock_idata_multidim(self):
+        """Create InferenceData with multiple dimensions."""
+        dates = pd.date_range("2025-01-01", periods=5, freq="W-MON")
+        channels = ["C1", "C2"]
+        geos = ["US", "UK"]
+
+        posterior = xr.Dataset(
+            {
+                "intercept_contribution": xr.DataArray(
+                    np.random.normal(size=(2, 30, 5, 2)),
+                    dims=("chain", "draw", "date", "geo"),
+                    coords={
+                        "chain": [0, 1],
+                        "draw": np.arange(30),
+                        "date": dates,
+                        "geo": geos,
+                    },
+                ),
+                "channel_contribution": xr.DataArray(
+                    np.random.normal(size=(2, 30, 5, 2, 2)),
+                    dims=("chain", "draw", "date", "channel", "geo"),
+                    coords={
+                        "chain": [0, 1],
+                        "draw": np.arange(30),
+                        "date": dates,
+                        "channel": channels,
+                        "geo": geos,
+                    },
+                ),
+            }
+        )
+        idata = xr.DataTree.from_dict({"/posterior": posterior})
+        return idata
+
+    def test_build_contributions_basic(self, mock_idata_simple):
+        """Test basic functionality of build_contributions."""
+        df = build_contributions(
+            idata=mock_idata_simple,
+            var=["intercept_contribution", "channel_contribution"],
+            agg="mean",
+        )
+
+        # Check it returns a DataFrame
+        assert isinstance(df, pd.DataFrame)
+
+        # Should have date column
+        assert "date" in df.columns
+
+        # Should have expanded channel columns
+        assert "channel__C1" in df.columns
+        assert "channel__C2" in df.columns
+
+        # Should have intercept column (renamed from intercept_contribution)
+        assert "intercept" in df.columns
+
+        # Check that we have 10 rows (one per date)
+        assert len(df) == 10
+
+    def test_build_contributions_with_median(self, mock_idata_simple):
+        """Test build_contributions with median aggregation."""
+        df = build_contributions(
+            idata=mock_idata_simple,
+            var=["intercept_contribution"],
+            agg="median",
+        )
+
+        assert isinstance(df, pd.DataFrame)
+        assert "intercept" in df.columns
+        assert len(df) == 10
+
+    def test_build_contributions_multidimensional(self, mock_idata_multidim):
+        """Test build_contributions with multiple dimensions."""
+        df = build_contributions(
+            idata=mock_idata_multidim,
+            var=["intercept_contribution", "channel_contribution"],
+            agg="mean",
+        )
+
+        # Should have both date and geo columns
+        assert "date" in df.columns
+        assert "geo" in df.columns
+
+        # Should have expanded channel columns
+        assert "channel__C1" in df.columns
+        assert "channel__C2" in df.columns
+
+        # Should have intercept
+        assert "intercept" in df.columns
+
+        # Check that we have 10 rows (5 dates * 2 geos)
+        assert len(df) == 10
+
+        # Check geo is categorical
+        assert df["geo"].dtype.name == "category"
+
+    def test_build_contributions_custom_dims(self, mock_idata_simple):
+        """Test build_contributions with custom dimension parameters."""
+        df = build_contributions(
+            idata=mock_idata_simple,
+            var=["channel_contribution"],
+            agg="mean",
+            agg_dims=("chain", "draw"),
+            index_dims=("date",),
+            expand_dims=("channel",),
+        )
+
+        assert isinstance(df, pd.DataFrame)
+        assert "channel__C1" in df.columns
+        assert "channel__C2" in df.columns
+
+    def test_build_contributions_missing_variables(self, mock_idata_simple):
+        """Test that build_contributions raises error for missing variables."""
+        with pytest.raises(
+            ValueError,
+            match=r"None of the requested variables .* are present in idata.posterior",
+        ):
+            build_contributions(
+                idata=mock_idata_simple,
+                var=["nonexistent_variable"],
+                agg="mean",
+            )
+
+    def test_build_contributions_partial_variables(self, mock_idata_simple):
+        """Test build_contributions with some valid and some invalid variables."""
+        # Should work with only the valid variable
+        df = build_contributions(
+            idata=mock_idata_simple,
+            var=["intercept_contribution", "nonexistent"],
+            agg="mean",
+        )
+
+        # Should have the intercept column
+        assert "intercept" in df.columns
+        assert len(df) == 10
+
+    def test_build_contributions_no_category_cast(self, mock_idata_multidim):
+        """Test build_contributions without casting to category."""
+        df = build_contributions(
+            idata=mock_idata_multidim,
+            var=["intercept_contribution"],
+            agg="mean",
+            cast_regular_to_category=False,
+        )
+
+        # Geo should not be categorical
+        assert df["geo"].dtype.name != "category"
+
+    def test_build_contributions_custom_aggregation(self, mock_idata_simple):
+        """Test build_contributions with a custom aggregation function."""
+
+        def custom_agg(data, axis):
+            # Custom aggregation: 75th percentile
+            return np.quantile(data, 0.75, axis=axis)
+
+        df = build_contributions(
+            idata=mock_idata_simple,
+            var=["intercept_contribution"],
+            agg=custom_agg,
+        )
+
+        assert isinstance(df, pd.DataFrame)
+        assert "intercept" in df.columns
+        assert len(df) == 10
+
+
+class _StubEffect:
+    """A mu effect that reads *data_vars* and nothing else.
+
+    `create_zero_dataset` only ever asks an effect which variables it reads and
+    what carryover it declares, so the branches below need a name, a list and an
+    opt-out -- not a fitted funnel.
+    ``set_data`` mirrors ``DataVarMuEffect``: it sets what the dataset carries,
+    which is what lets ``create_optimization_model`` run the stub end to end.
+    """
+
+    def __init__(self, data_vars):
+        self.data_vars = list(data_vars)
+
+    def incrementality_spec(self):
+        """Opt out, as ``MuEffect``'s own default does.
+
+        The stub stands in for a real effect, so it has to answer the questions
+        the ABC says every effect answers. Leaving it off would make production
+        code tolerate a shape no registered effect can have.
+        """
+        return None
+
+    def set_data(self, mmm, model, X):
+        for var_name in self.data_vars:
+            if var_name in X.data_vars and var_name in model.named_vars:
+                pm.set_data({var_name: X[var_name].values}, model=model)
+
+
+class TestEffectDataInTheOptimizationWindow:
+    """`create_zero_dataset` has to carry the variables mu_effects read.
+
+    Without them `DataVarMuEffect.set_data` silently skips its own variables --
+    it only sets what the dataset carries -- so the effect's `pm.Data` keeps its
+    fit-time length. In-sample the lengths happen to agree; every other window
+    fails on shape.
+    """
+
+    # Opens the week after the fixture's training data ends (2023-06-12), so
+    # the carry-in block is real history rather than a warned cold start.
+    WINDOW = {"start_date": "2023-06-19", "end_date": "2023-08-14"}
+
+    def _zero_ds(self, mmm, **kwargs):
+        return create_zero_dataset(model=mmm, **self.WINDOW, **kwargs)
+
+    def test_effect_variables_are_present_and_zero_filled(
+        self, funnel_identity_fitted_mmm
+    ):
+        ds = self._zero_ds(funnel_identity_fitted_mmm)
+
+        assert "lf_budget" in ds.data_vars
+        assert ds["lf_budget"].sizes["date"] == ds["_channel"].sizes["date"]
+        assert (ds["lf_budget"].to_numpy() == 0).all()
+
+    def test_out_of_sample_optimization_model_builds(self, funnel_identity_fitted_mmm):
+        """The regression: a window other than the training one used to fail on shape."""
+        model = funnel_identity_fitted_mmm.create_optimization_model(**self.WINDOW)
+
+        n_dates = len(model.coords["date"])
+        assert model["lf_budget"].get_value().shape == (n_dates,)
+
+    def test_a_funnel_model_optimizes_over_a_future_window(
+        self, funnel_identity_fitted_mmm
+    ):
+        """The claim itself: allocate a budget on a funnel model, out of sample.
+
+        Building the model with the right shapes is the fix; this is what the
+        fix is *for*. Scored against the objective that sees the mediated path,
+        so the plan reflects the demand the upper funnel creates rather than the
+        direct path alone.
+
+        `cvm` because the numba backend cannot compile the gradient of this
+        effect's second, sample-batched adstock (pytensor#2360); that is
+        upstream and unrelated to the window.
+        """
+        optimizer = funnel_identity_fitted_mmm.budget_optimizer(
+            **self.WINDOW,
+            response_variable="total_response_original_scale",
+            compile_kwargs={"mode": Mode(linker="cvm")},
+        )
+
+        result = optimizer.allocate_budget(total_budget=10.0)
+
+        assert result.scipy_result.success, result.scipy_result.message
+        np.testing.assert_allclose(float(result.budgets.sum()), 10.0, rtol=1e-6)
+        assert (result.budgets >= 0).all()
+
+    def test_a_planned_calendar_can_be_set_on_the_built_model(
+        self, funnel_identity_fitted_mmm
+    ):
+        """Zeros are the default, not the only option.
+
+        Planning against committed activity needs no parameter of its own:
+        set the variable on the model and hand that model to BudgetOptimizer,
+        which is what its ``model`` + ``idata`` signature is for. That only
+        works because the variable is now present at the window's length.
+
+        The documented direct path is then exercised end to end: the model's
+        date axis is carry-in + decisions + carry-over, so the optimizer has
+        to be told about the leading block, and the allocation has to land on
+        the window dates rather than on the history before them.
+        """
+        from pytensor import function
+
+        from pymc_marketing.mmm.budget_optimizer import BudgetOptimizer
+
+        mmm = funnel_identity_fitted_mmm
+        lags = mmm.effective_carryover_lags()
+        # Opens right after training, so the leading block is real history.
+        n_decisions = 8
+        t0 = pd.Timestamp(mmm.xarray_dataset.coords["date"].values[-1])
+        model = mmm.create_optimization_model(
+            start_date=t0 + pd.Timedelta(weeks=1),
+            end_date=t0 + pd.Timedelta(weeks=n_decisions),
+        )
+        n_dates = len(model.coords["date"])
+        assert n_dates == lags + n_decisions + lags
+
+        pm.set_data({"lf_budget": np.full(n_dates, 0.7)}, model=model)
+        np.testing.assert_allclose(model["lf_budget"].get_value(), 0.7)
+
+        optimizer = BudgetOptimizer(
+            model=model,
+            idata=mmm.idata,
+            num_periods=n_decisions,
+            adstock_periods=lags,
+            carry_in_periods=lags,
+            response_variable="total_response_original_scale",
+            compile_kwargs={"mode": Mode(linker="cvm")},
+        )
+        result = optimizer.allocate_budget(total_budget=10.0)
+
+        assert result.scipy_result.success, result.scipy_result.message
+        np.testing.assert_allclose(float(result.budgets.sum()), 10.0, rtol=1e-6)
+
+        # The channel tensor the objective actually saw, at the solution.
+        substituted = function(
+            [optimizer._budgets_flat],
+            optimizer._pymc_model["channel_data"],
+            mode=Mode(linker="cvm"),
+        )(result.scipy_result.x)
+        substituted = np.asarray(substituted)
+        history = np.asarray(model["channel_data"].get_value())[:lags]
+        assert (history > 0).all()  # real spend, not a zeroed block
+        assert substituted.shape == (n_dates, len(mmm.channel_columns))
+        np.testing.assert_allclose(substituted[:lags], history)
+        assert (substituted[lags : lags + n_decisions] > 0).all()
+        np.testing.assert_allclose(substituted[lags + n_decisions :], 0.0)
+
+    def test_an_in_sample_window_reproduces_history(self, funnel_identity_fitted_mmm):
+        """With ``carry_in``, only the decision variable differs from the fit.
+
+        Re-optimizing a window that overlaps training is a counterfactual on
+        the spend alone: every other input should still hold the value the
+        posterior was fitted to. When it does, the response at the historical
+        plan equals the in-sample posterior mean by construction -- the graph
+        is the same and every non-decision input is the same.
+        """
+        mmm = funnel_identity_fitted_mmm
+        dates = mmm.xarray_dataset.coords["date"].values
+        lags = mmm.effective_carryover_lags()
+
+        opt = mmm.create_optimization_model(
+            start_date=dates[0], end_date=dates[-(lags + 1)]
+        )
+
+        np.testing.assert_allclose(
+            opt["lf_budget"].get_value(), mmm.model["lf_budget"].get_value()
+        )
+
+    def test_create_zero_dataset_still_zero_fills_by_default(
+        self, funnel_identity_fitted_mmm
+    ):
+        """Optimization restores observed values; the zero dataset itself does not.
+
+        ``sample_response_distribution`` scores an allocation against a zeroed
+        baseline, so the default has to keep zero-filling. The in-sample window
+        is the only place the difference is observable, which makes it the only
+        place that default can be pinned.
+        """
+        mmm = funnel_identity_fitted_mmm
+        dates = mmm.xarray_dataset.coords["date"].values
+        l_max = mmm.adstock.l_max
+
+        ds = create_zero_dataset(
+            model=mmm, start_date=dates[0], end_date=dates[-(l_max + 1)]
+        )
+
+        assert (ds["lf_budget"].to_numpy() == 0).all()
+
+    def test_the_decision_variable_is_still_zeroed(self, funnel_identity_fitted_mmm):
+        """Restoring inputs must never restore the spend being decided."""
+        mmm = funnel_identity_fitted_mmm
+        dates = mmm.xarray_dataset.coords["date"].values
+        lags = mmm.effective_carryover_lags()
+
+        opt = mmm.create_optimization_model(
+            start_date=dates[0], end_date=dates[-(lags + 1)]
+        )
+
+        assert (np.asarray(opt["channel_data"].get_value()) == 0).all()
+
+    def test_preserve_observed_falls_back_to_zero_where_training_does_not_reach(
+        self, funnel_identity_fitted_mmm
+    ):
+        """On a genuinely future window the flag changes nothing.
+
+        No date is covered by the training data, so every observed value the
+        rule could carry is absent and the fill decays to the zeros a future
+        window means. The flag therefore needs no knowledge of which kind of
+        window it was handed.
+        """
+        ds_on = self._zero_ds(funnel_identity_fitted_mmm, preserve_observed=True)
+        ds_off = self._zero_ds(funnel_identity_fitted_mmm, preserve_observed=False)
+
+        np.testing.assert_allclose(
+            ds_on["lf_budget"].to_numpy(), ds_off["lf_budget"].to_numpy()
+        )
+        assert (ds_on["lf_budget"].to_numpy() == 0).all()
+
+    def test_a_variable_the_training_data_does_not_carry_is_an_error(
+        self, funnel_identity_fitted_mmm, monkeypatch
+    ):
+        """An effect reading a variable the training data lacks cannot be served.
+
+        Its dims and coords are only knowable from the training dataset, so
+        there is nothing to build the window-length array from. Better to say
+        so than to leave the variable out and fail later on shape, where the
+        message points at the model rather than at the effect.
+        """
+        monkeypatch.setattr(
+            funnel_identity_fitted_mmm, "mu_effects", [_StubEffect(["no_such_var"])]
+        )
+
+        with pytest.raises(ValueError, match="_StubEffect reads 'no_such_var'"):
+            self._zero_ds(funnel_identity_fitted_mmm)
+
+    def test_the_error_names_every_effect_that_reads_the_variable(
+        self, funnel_identity_fitted_mmm, monkeypatch
+    ):
+        """Two effects reading the same missing variable are both named.
+
+        Collapsing the readers to one would point at whichever effect came
+        last, and the user would fix that one and hit the error again.
+        """
+
+        class _OtherStubEffect(_StubEffect):
+            pass
+
+        monkeypatch.setattr(
+            funnel_identity_fitted_mmm,
+            "mu_effects",
+            [_StubEffect(["no_such_var"]), _OtherStubEffect(["no_such_var"])],
+        )
+
+        with pytest.raises(ValueError, match="_StubEffect, _OtherStubEffect"):
+            self._zero_ds(funnel_identity_fitted_mmm)
+
+    def test_an_effect_variable_with_holes_is_a_loud_error(
+        self, funnel_identity_fitted_mmm, monkeypatch
+    ):
+        """A variable that does not cover the shared index cannot be set silently.
+
+        One ``xr.Dataset`` holds a single index per dim, so an effect variable
+        whose ``channel`` labels are a strict subset of the model's is NaN-filled
+        on the missing labels the moment it is aligned. Nothing downstream can
+        repair that: ``pm.set_data`` would write the NaN into the model and the
+        optimizer would score it. Better to stop here, naming the effect and the
+        variable, than to fail on NaN several frames into scipy.
+        """
+        mmm = funnel_identity_fitted_mmm
+        partial = mmm.xarray_dataset["_channel"].sel(channel=["channel_2"])
+        # Assigning into the dataset aligns on the full channel index, which
+        # leaves channel_1 as NaN: the reviewer's probe, reproduced.
+        monkeypatch.setattr(
+            mmm, "xarray_dataset", mmm.xarray_dataset.assign(partial=partial)
+        )
+        monkeypatch.setattr(mmm, "mu_effects", [_StubEffect(["partial"])])
+        # In-sample, so the observed (and holed) values are what gets carried.
+        dates = mmm.xarray_dataset.coords["date"].values
+        lags = mmm.effective_carryover_lags()
+
+        with pytest.raises(ValueError, match=r"_StubEffect.*'partial'.*NaN"):
+            mmm.create_optimization_model(
+                start_date=dates[0], end_date=dates[-(lags + 1)]
+            )
+
+    def test_a_window_independent_variable_is_left_alone(
+        self, funnel_identity_fitted_mmm, monkeypatch
+    ):
+        """A variable without a date dim keeps its value; zero-filling would destroy it.
+
+        Its `pm.Data` is already the right shape for any window, so there is
+        nothing to correct -- and it is a constant, a per-channel rate or a
+        population. Reindexing it onto the new dates would replace that constant
+        with zeros and quietly change the model.
+        """
+        mmm = funnel_identity_fitted_mmm
+        capacity = xr.DataArray(
+            [2.0, 5.0],
+            dims=("channel",),
+            coords={"channel": list(mmm.xarray_dataset.coords["channel"].values)},
+        )
+        monkeypatch.setattr(
+            mmm, "xarray_dataset", mmm.xarray_dataset.assign(channel_capacity=capacity)
+        )
+        monkeypatch.setattr(mmm, "mu_effects", [_StubEffect(["channel_capacity"])])
+
+        ds = self._zero_ds(mmm)
+
+        assert "channel_capacity" not in ds.data_vars
+
+    def test_a_multidimensional_effect_variable_keeps_its_other_dims(
+        self, funnel_identity_fitted_mmm, monkeypatch
+    ):
+        """Effect variables are not all one-dimensional.
+
+        `MediaMuEffect` and `ControlMuEffect` are `DataVarMuEffect`s whose
+        variables carry a channel or control dim alongside date, so only the
+        date axis may be rebuilt: the other dims and their coords have to
+        survive intact, or `set_data` writes a correctly-sized wrong shape.
+        """
+        mmm = funnel_identity_fitted_mmm
+        channels = list(mmm.xarray_dataset.coords["channel"].values)
+        template = mmm.xarray_dataset["_channel"].rename("media_by_channel")
+        monkeypatch.setattr(
+            mmm, "xarray_dataset", mmm.xarray_dataset.assign(media_by_channel=template)
+        )
+        monkeypatch.setattr(mmm, "mu_effects", [_StubEffect(["media_by_channel"])])
+
+        ds = self._zero_ds(mmm)
+
+        filled = ds["media_by_channel"]
+        assert filled.dims == ("date", "channel")
+        assert filled.sizes["date"] == ds["_channel"].sizes["date"]
+        assert list(filled.coords["channel"].values) == channels
+        assert (filled.to_numpy() == 0).all()
+
+    def test_a_variable_the_dataset_already_carries_is_not_overwritten(
+        self, funnel_identity_fitted_mmm, monkeypatch
+    ):
+        """An effect reading `_channel` must not clobber the spend just built.
+
+        `_channel` is the decision variable. Zero-filling it here would erase
+        whatever `channel_xr` supplied -- and, in the optimizer, the allocation
+        itself.
+        """
+        mmm = funnel_identity_fitted_mmm
+        monkeypatch.setattr(mmm, "mu_effects", [_StubEffect(["_channel"])])
+        channel_xr = xr.Dataset({ch: xr.DataArray(3.0) for ch in mmm.channel_columns})
+
+        ds = self._zero_ds(mmm, channel_xr=channel_xr)
+
+        np.testing.assert_allclose(ds["_channel"].to_numpy(), 3.0)
+
+
+class TestAdstockCarryIn:
+    """The window opens on the spend that preceded it, not on a cold adstock.
+
+    Optimizing from ``t0+1`` with no leading spend models a business that went
+    dark before the plan starts. Because adstock feeds saturation, that is not
+    an additive constant: it moves the curve's operating point over the first
+    ``l_max`` periods and so changes the marginal return the optimizer
+    equalises. The data exists -- it is the tail of the training set.
+    """
+
+    N_PERIODS = 8
+
+    def _window(self, mmm):
+        dates = pd.DatetimeIndex(mmm.xarray_dataset.coords["date"].values)
+        t0 = dates[-1]
+        return t0 + pd.Timedelta(weeks=1), t0 + pd.Timedelta(weeks=self.N_PERIODS)
+
+    def test_the_leading_dates_hold_the_spend_that_already_happened(
+        self, funnel_identity_fitted_mmm
+    ):
+        mmm = funnel_identity_fitted_mmm
+        lags = mmm.effective_carryover_lags()
+        start, end = self._window(mmm)
+
+        opt = mmm.create_optimization_model(start_date=start, end_date=end)
+
+        channel_data = np.asarray(opt["channel_data"].get_value())
+        training = np.asarray(mmm.model["channel_data"].get_value())
+        np.testing.assert_allclose(channel_data[:lags], training[-lags:])
+        # Only the leading block is history; the decision window and the
+        # carry-over tail stay at zero for the optimizer to fill.
+        assert (channel_data[lags:] == 0).all()
+
+    def test_carry_in_clips_to_the_history_that_exists_and_says_so(
+        self, funnel_identity_fitted_mmm, caplog
+    ):
+        """You cannot carry in spend from before the data starts.
+
+        A window opening at the first training date has no history behind it,
+        so the leading block clips to nothing. That is correct rather than
+        exceptional -- it is also how the model itself was fitted -- so it is
+        not a warning; but a partially warm adstock is indistinguishable from a
+        fully warm one from the outside, which makes it worth a debug record.
+        """
+        mmm = funnel_identity_fitted_mmm
+        dates = mmm.xarray_dataset.coords["date"].values
+        lags = mmm.effective_carryover_lags()
+
+        with caplog.at_level(logging.DEBUG, logger="pymc_marketing.mmm.utils"):
+            opt = mmm.create_optimization_model(
+                start_date=dates[0], end_date=dates[-(lags + 1)]
+            )
+
+        # Nothing precedes the first training date, so no leading block at all.
+        assert len(opt.coords["date"]) == len(dates)
+        assert f"carry-in clipped to 0 of {lags}" in caplog.text
+
+    def test_history_that_is_not_adjacent_to_the_window_is_not_carried_in(
+        self, funnel_identity_fitted_mmm, caplog
+    ):
+        """Carry-in means the spend immediately before the window, not any spend.
+
+        A window opening a year after training ends has no adjacent history:
+        splicing the last training weeks onto it would convolve year-old spend
+        as if it were last week's, and the window would come up warm on
+        activity that decayed to nothing long ago. The right answer is the
+        cold start the user would have got anyway, said out loud, and without
+        the "clipped" debug record, whose wording assumes the history is
+        merely short.
+        """
+        mmm = funnel_identity_fitted_mmm
+        dates = pd.DatetimeIndex(mmm.xarray_dataset.coords["date"].values)
+        lags = mmm.effective_carryover_lags()
+        start = dates[-1] + pd.Timedelta(weeks=52)
+        end = start + pd.Timedelta(weeks=self.N_PERIODS - 1)
+
+        with (
+            caplog.at_level(logging.DEBUG, logger="pymc_marketing.mmm.utils"),
+            pytest.warns(UserWarning, match="not contiguous with the window"),
+        ):
+            opt = mmm.create_optimization_model(start_date=start, end_date=end)
+
+        assert len(opt.coords["date"]) == self.N_PERIODS + lags
+        assert (np.asarray(opt["channel_data"].get_value()) == 0).all()
+        assert "carry-in clipped" not in caplog.text
+
+    def test_adjacent_history_is_carried_in_without_a_word(
+        self, funnel_identity_fitted_mmm
+    ):
+        """The common case, a window opening right after training, stays quiet."""
+        mmm = funnel_identity_fitted_mmm
+        start, end = self._window(mmm)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            opt = mmm.create_optimization_model(start_date=start, end_date=end)
+
+        lags = mmm.effective_carryover_lags()
+        assert len(opt.coords["date"]) == lags + self.N_PERIODS + lags
+
+    def test_the_date_axis_is_carry_in_plus_decisions_plus_carry_over(
+        self, funnel_identity_fitted_mmm
+    ):
+        mmm = funnel_identity_fitted_mmm
+        lags = mmm.effective_carryover_lags()
+        start, end = self._window(mmm)
+
+        opt = mmm.create_optimization_model(start_date=start, end_date=end)
+
+        assert len(opt.coords["date"]) == lags + self.N_PERIODS + lags
+
+    def test_the_leading_dates_are_not_decisions(self, funnel_identity_fitted_mmm):
+        """The budget must be spread over the window, never over history.
+
+        ``num_periods`` is derived by subtracting the flanking blocks from the
+        date axis, so a leading block that is not subtracted would silently
+        turn spend that already happened into a decision.
+        """
+        mmm = funnel_identity_fitted_mmm
+        start, end = self._window(mmm)
+
+        optimizer = mmm.budget_optimizer(
+            start_date=start,
+            end_date=end,
+            response_variable="total_response_original_scale",
+            compile_kwargs={"mode": Mode(linker="cvm")},
+        )
+
+        assert optimizer.num_periods == self.N_PERIODS
+        assert optimizer.carry_in_periods == mmm.effective_carryover_lags()
+
+
+class TestEffectiveCarryover:
+    """An effect's declared carryover has to size the optimization window.
+
+    ``spend_reach`` already honours ``additional_carryover_lags`` when it sizes
+    the incrementality evaluation windows. Sizing the optimization window from
+    ``adstock.l_max`` alone truncates the same tail, so the objective
+    undercounts the carry-over every candidate plan produces.
+    """
+
+    def test_the_declaration_widens_the_window(
+        self, funnel_identity_fitted_mmm, monkeypatch
+    ):
+        """Both flanks of the date axis follow the declaration, and only it."""
+        mmm = funnel_identity_fitted_mmm
+        l_max = mmm.adstock.l_max
+        declared = mmm.effective_carryover_lags()
+        # The fixture's mediator chains a second adstock behind the model's own.
+        assert declared > l_max
+
+        n_periods = 8
+        dates = pd.DatetimeIndex(mmm.xarray_dataset.coords["date"].values)
+        start = dates[-1] + pd.Timedelta(weeks=1)
+        end = dates[-1] + pd.Timedelta(weeks=n_periods)
+
+        with_declaration = mmm.create_optimization_model(start_date=start, end_date=end)
+        assert len(with_declaration.coords["date"]) == declared + n_periods + declared
+
+        effect = mmm.mu_effects[0]
+        monkeypatch.setattr(
+            type(effect), "incrementality_spec", lambda self: IncrementalitySpec()
+        )
+
+        assert mmm.effective_carryover_lags() == l_max
+        without = mmm.create_optimization_model(start_date=start, end_date=end)
+        assert len(without.coords["date"]) == l_max + n_periods + l_max
+
+    def test_an_effect_that_declares_nothing_changes_nothing(
+        self, funnel_identity_fitted_mmm, monkeypatch
+    ):
+        """Declarations only -- never a guess on the effect's behalf.
+
+        ``effective_carryover_lags`` runs at build time, where reach cannot be
+        measured. An effect that opts out entirely must therefore leave the
+        window exactly as ``adstock.l_max`` sized it.
+        """
+        mmm = funnel_identity_fitted_mmm
+        effect = mmm.mu_effects[0]
+        monkeypatch.setattr(type(effect), "incrementality_spec", lambda self: None)
+
+        assert mmm.effective_carryover_lags() == mmm.adstock.l_max

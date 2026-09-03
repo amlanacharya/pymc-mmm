@@ -1,0 +1,345 @@
+#   Copyright 2022 - 2026 The PyMC Labs Developers
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+import numpy as np
+import pandas as pd
+import pymc as pm
+import pytest
+import xarray as xr
+from pymc_extras.prior import Prior
+
+from pymc_marketing.clv.models.basic import CLVModel
+from pymc_marketing.model_builder import DifferentModelError
+from tests.clv.conftest import mock_fit_map, mock_sample, set_model_fit
+
+
+class CLVModelTest(CLVModel):
+    _model_type = "CLVModelTest"
+
+    def __init__(
+        self,
+        data: pd.DataFrame | None = None,
+        model_config=None,
+        sampler_config: dict | None = None,
+    ):
+        if data is None:
+            data = pd.DataFrame({"y": np.random.randn(10)})
+
+        super().__init__(
+            model_config=model_config,
+            sampler_config=sampler_config,
+        )
+        self.data = data
+
+    @property
+    def default_model_config(self):
+        return {
+            "x": Prior("Normal", mu=0, sigma=1),
+        }
+
+    def _validate_data(self, data: pd.DataFrame) -> None:
+        """Validate data for CLVModelTest."""
+        self._validate_cols(data, required_cols=["y"], must_be_unique=[])
+
+    def build_model(self, data: pd.DataFrame | None = None) -> None:  # type: ignore[override]
+        if data is not None:
+            self._validate_data(data)
+            self.data = data
+        elif not hasattr(self, "data") or self.data is None:
+            raise ValueError(
+                f"{self._model_type}.build_model() requires data parameter. "
+                "Either pass data to build_model(data=...) or fit(data=...)"
+            )
+        else:
+            self._validate_data(self.data)
+
+        with pm.Model() as self.model:
+            x = self.model_config["x"].create_variable("x")
+            pm.Normal("y", mu=x, sigma=1, observed=self.data["y"])
+
+
+class CLVModelForLoadTest(CLVModelTest):
+    """Like CLVModelTest but does not invent random ``data`` when ``data`` is omitted."""
+
+    _model_type = "CLVModelForLoadTest"
+
+    def __init__(
+        self,
+        data=None,
+        model_config=None,
+        sampler_config: dict | None = None,
+    ):
+        CLVModel.__init__(
+            self,
+            model_config=model_config,
+            sampler_config=sampler_config,
+        )
+        if data is not None:
+            self.data = data
+
+
+@pytest.fixture(scope="module")
+def posterior():
+    # Create a random numpy array for posterior samples
+    posterior_samples = np.random.randn(
+        4, 100, 2
+    )  # shape convention: (chain, draw, *shape)
+
+    # Create a dictionary for posterior
+    posterior_dict = xr.Dataset({"theta": posterior_samples})
+    return xr.DataTree.from_dict({"/posterior": posterior_dict})
+
+
+class TestCLVModel:
+    def test_repr(self):
+        model = CLVModelTest()
+        assert model.__repr__() == "CLVModelTest"
+
+        model.build_model(model.data)
+        assert model.__repr__() == "CLVModelTest\nx ~ Normal(0, 1)\ny ~ Normal(x, 1)"
+
+    def test_fit_mcmc(self, mocker):
+        model = CLVModelTest()
+
+        mocker.patch("pymc.sample", mock_sample)
+
+        idata = model.fit(
+            data=model.data,
+            tune=5,
+            chains=2,
+            draws=10,
+            compute_convergence_checks=False,
+        )
+        assert isinstance(idata, xr.DataTree)
+        assert idata["/posterior"].to_dataset().sizes["chain"] == 2
+        assert idata["/posterior"].to_dataset().sizes["draw"] == 10
+        assert model.fit_result.equals(idata["/posterior"].to_dataset())
+        assert isinstance(model.fit_result, xr.Dataset)
+
+    def test_fit_map(self, mocker):
+        model = CLVModelTest()
+
+        mocker.patch("pymc_marketing.clv.models.basic.CLVModel._fit_map", mock_fit_map)
+        idata = model.fit(
+            data=model.data,
+            method="map",
+        )
+
+        assert isinstance(idata, xr.DataTree)
+        assert idata["/posterior"].to_dataset().sizes["chain"] == 1
+        assert idata["/posterior"].to_dataset().sizes["draw"] == 1
+        assert model.fit_result.equals(idata["/posterior"].to_dataset())
+        assert isinstance(model.fit_result, xr.Dataset)
+        # Check that summary only includes single value
+        summ = model.fit_summary()
+        assert isinstance(summ, pd.Series)
+        assert summ.name == "value"
+
+    def test_fit_demz(self, mocker):
+        model = CLVModelTest()
+
+        mocker.patch("pymc.sample", mock_sample)
+
+        idata = model.fit(
+            data=model.data,
+            method="demz",
+            tune=5,
+            chains=2,
+            draws=10,
+            compute_convergence_checks=False,
+        )
+
+        assert isinstance(idata, xr.DataTree)
+        assert idata["/posterior"].to_dataset().sizes["chain"] == 2
+        assert idata["/posterior"].to_dataset().sizes["draw"] == 10
+        assert model.fit_result.equals(idata["/posterior"].to_dataset())
+        assert isinstance(model.fit_result, xr.Dataset)
+
+    def test_fit_advi(self, mocker):
+        model = CLVModelTest()
+        # mocker.patch("pymc.sample", mock_sample)
+        idata = model.fit(
+            data=model.data,
+            method="advi",
+            tune=5,
+            chains=1,
+            draws=10,
+        )
+        assert isinstance(idata, xr.DataTree)
+        assert idata["/posterior"].to_dataset().sizes["chain"] == 1
+        assert idata["/posterior"].to_dataset().sizes["draw"] == 10
+
+    def test_fit_advi_with_wrong_chains_advi_kwargs(self, mocker):
+        model = CLVModelTest()
+
+        with pytest.warns(
+            UserWarning,
+            match=r"The 'chains' parameter must be 1 with 'advi'. Sampling only 1 chain despite the provided parameter.",  # noqa: E501
+        ):
+            model.fit(
+                data=model.data,
+                method="advi",
+                tune=5,
+                chains=2,
+                draws=10,
+            )
+
+    def test_fit_raises_if_data_changed(self, mocker):
+        model = CLVModelTest()
+        mocker.patch("pymc.sample", mock_sample)
+
+        model.build_model(model.data)
+        new_data = pd.DataFrame({"y": np.random.randn(10)})
+        with pytest.raises(
+            ValueError,
+            match="The model was built with different data",
+        ):
+            model.fit(
+                data=new_data,
+                tune=0,
+                chains=2,
+                draws=5,
+            )
+
+    def test_fit_does_not_raise_if_data_unchanged(self, mocker):
+        model = CLVModelTest()
+        mocker.patch("pymc.sample", mock_sample)
+
+        model.build_model(model.data)
+        idata = model.fit(
+            data=model.data,
+            tune=0,
+            chains=2,
+            draws=5,
+        )
+        assert isinstance(idata, xr.DataTree)
+
+    def test_wrong_method(self):
+        model = CLVModelTest()
+        with pytest.raises(
+            ValueError,
+            match=r"Fit method options are \['mcmc', 'map', 'demz', 'advi', 'fullrank_advi'\], got: wrong_method",
+        ):
+            model.fit(
+                data=model.data,
+                method="wrong_method",
+            )
+
+    def test_fit_without_data_raises(self):
+        model = CLVModelForLoadTest()
+
+        with pytest.raises(ValueError, match="data is required to build the model"):
+            model.fit()
+
+    def test_load(self, mocker, tmp_path):
+        model = CLVModelTest()
+        save_path = tmp_path / "test_model"
+
+        mocker.patch("pymc.sample", mock_sample)
+
+        model.fit(data=model.data, tune=0, chains=2, draws=5)
+        model.save(save_path)
+        model2 = model.load(save_path)
+
+        assert model2.fit_result is not None
+
+        model2.build_model(data=model.data)
+        assert model2.model is not None
+
+    def test_load_from_idata_without_fit_data_warns(self, mocker):
+        mocker.patch("pymc.sample", mock_sample)
+        model = CLVModelForLoadTest()
+        data = pd.DataFrame({"y": np.arange(10, dtype=float)})
+        model.fit(data=data, tune=0, chains=2, draws=5)
+        idata = model.idata.copy()
+        assert "fit_data" in idata
+        idata = idata.drop_nodes("fit_data")
+        with pytest.warns(UserWarning, match="fit_data used for training"):
+            loaded = CLVModelForLoadTest.load_from_idata(idata)
+        assert isinstance(loaded, CLVModelForLoadTest)
+        assert loaded.idata is idata
+        assert not hasattr(loaded, "model")
+        assert not hasattr(loaded, "data")
+
+    def test_default_sampler_config(self):
+        model = CLVModelTest()
+        assert model.sampler_config == {}
+
+    def test_fit_summary_for_mcmc(self, mocker):
+        model = CLVModelTest()
+
+        mocker.patch("pymc.sample", mock_sample)
+        model.fit(data=model.data, tune=0, chains=2, draws=5)
+        summ = model.fit_summary()
+        assert isinstance(summ, pd.DataFrame)
+
+    def test_serializable_model_config(self):
+        model = CLVModelTest()
+        serializable_config = model._serializable_model_config
+        assert isinstance(serializable_config, dict)
+        assert serializable_config == model.model_config
+
+    def test_fail_id_after_load(self, mocker, monkeypatch, tmp_path):
+        # This is the new behavior for the property
+        def mock_property(self):
+            return "for sure not correct id"
+
+        # Now create an instance of MyClass
+        mock_basic = CLVModelTest()
+        save_path = tmp_path / "test_model"
+        mocker.patch("pymc.sample", mock_sample)
+        mock_basic.fit(data=mock_basic.data, tune=0, chains=2, draws=5)
+        mock_basic.save(save_path)
+
+        # Apply the monkeypatch for the property
+        monkeypatch.setattr(CLVModelTest, "id", property(mock_property))
+        with pytest.raises(
+            DifferentModelError,
+            match=r"(?i)test_model|model.*different|configuration|attrs",
+        ):
+            CLVModelTest.load(save_path)
+
+    def test_thin_fit_result(self):
+        data = pd.DataFrame(dict(y=[-3, -2, -1]))
+        model = CLVModelTest()
+        model.build_model(data=data)
+        fake_idata = xr.DataTree.from_dict(
+            {
+                "/posterior": xr.Dataset(
+                    {"x": (("chain", "draw"), np.random.normal(size=(4, 1000)))}
+                )
+            }
+        )
+        set_model_fit(model, fake_idata)
+
+        thin_model = model.thin_fit_result(keep_every=20)
+        assert thin_model is not model
+        assert thin_model.idata is not model.idata
+        assert len(thin_model.posterior["x"].chain) == 4
+        assert len(thin_model.posterior["x"].draw) == 50
+        assert thin_model.data is not model.data
+        assert np.all(thin_model.data == model.data)
+
+    def test_validate_cols_reports_all_missing_columns(self):
+        """Test _validate_cols raises a single ValueError listing all missing columns."""
+        required = ("customer_id", "frequency", "recency", "T")
+        data = pd.DataFrame(
+            {
+                "customer_id": [1, 2, 3],
+                "frequency": [1, 2, 3],
+            }
+        )
+        expected_error_msg = r"The following required columns are missing from the input data: \['T', 'recency'\]"
+
+        with pytest.raises(ValueError, match=expected_error_msg):
+            CLVModel._validate_cols(data=data, required_cols=required)

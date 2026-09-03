@@ -1,0 +1,385 @@
+#!/usr/bin/env python3
+"""Sphinx configuration for PyMC-Marketing Docs."""
+
+import inspect
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import plotly.io as pio
+
+import pymc_marketing  # isort:skip
+
+# -- General configuration ------------------------------------------------
+
+# General information about the project.
+project = "PyMC-Marketing"
+author = "PyMC Labs"
+copyright = f"2022-%Y, {author}"
+# Keep the <title> suffix short: Google truncates titles around 60 characters,
+# so a long suffix pushes each page's own keywords out of the visible snippet.
+html_title = "PyMC-Marketing"
+
+# The master toctree document.
+master_doc = "index"
+
+# Add any Sphinx extension module names here, as strings
+extensions = [
+    # extensions from sphinx base
+    "sphinx.ext.autodoc",
+    "sphinx.ext.autosummary",
+    "sphinx.ext.linkcode",
+    "sphinx.ext.mathjax",
+    "sphinx.ext.intersphinx",
+    # extensions provided by other packages
+    "sphinx_autodoc_typehints",
+    "numpydoc",
+    "matplotlib.sphinxext.plot_directive",  # needed to plot in docstrings
+    "myst_nb",
+    "notfound.extension",
+    "sphinx_copybutton",
+    "sphinx_design",
+    "sphinx_remove_toctrees",
+    "sphinx_sitemap",
+    "sphinxext.opengraph",
+]
+
+# Add any paths that contain templates here, relative to this directory.
+templates_path = ["_templates"]
+
+# The suffix(es) of source filenames.
+source_suffix = [".rst", ".md"]
+
+# The full version, including alpha/beta/rc tags.
+release = pymc_marketing.__version__
+
+# The version info for the project you're documenting
+if os.environ.get("READTHEDOCS", False):
+    rtd_version = os.environ.get("READTHEDOCS_VERSION", "")
+    if rtd_version.lower() == "stable":
+        version = release.split("+")[0]
+    elif rtd_version.lower() == "latest":
+        version = "dev"
+    else:
+        version = rtd_version
+else:
+    version = "local"
+    rtd_version = version
+
+# List of patterns, relative to source directory, that match files and
+# directories to ignore when looking for source files.
+# Notebooks under any "dev/" subdirectory are work-in-progress drafts kept
+# in-tree for contributors but not part of the published docs. Excluding them
+# stops MyST from parsing them, which silences the bulk of the toctree and
+# duplicate-label warnings reported in #1198 and (transitively) #1209.
+exclude_patterns = [
+    "build",
+    "jupyter_execute",
+    "jupyter_cache",
+    "**.ipynb_checkpoints",
+    "**/dev/**",
+    # Internal contributor-facing README for the gallery, not part of the
+    # published docs (#1210); excluding stops the 'document isn't included
+    # in any toctree' warning.
+    "gallery/README.md",
+]
+
+# Suppress the harmless myst-parser override of mathjax3_config.processHtmlClass.
+# myst-parser intentionally extends the class list ("tex2jax_process" ->
+# "tex2jax_process|mathjax_process|math|output_area") so it can render math in
+# notebook output cells. Our config sets the same key, so myst flags it; the
+# resulting behaviour is what we want, so we silence the warning rather than
+# remove the explicit setting (which we keep for clarity).
+suppress_warnings = ["myst.mathjax"]
+
+# The reST default role (used for this markup: `text`) to use for all documents.
+# This sets the behaviour to be the same as in markdown
+default_role = "code"
+
+# The name of the Pygments (syntax highlighting) style to use.
+pygments_style = "friendly"
+
+# sphinx settings related to generation of translatable sources
+gettext_uuid = True
+gettext_compact = False
+locale_dirs = ["../../locales"]
+
+# -- Extension configuration ------------------------------------------------
+
+# exclude method pages from toctree to make pages lighter and build faster
+remove_from_toctrees = ["**/classmethods/*"]
+
+# matplotlib plot directive configuration
+# plot_pre_code runs before every .. plot:: block; replaces the default
+# "import numpy as np / from matplotlib import pyplot as plt" preamble.
+plot_pre_code = (
+    "import numpy as np\n"
+    "import arviz  # registers arviz styles with matplotlib\n"
+    "from matplotlib import pyplot as plt\n"
+    "plt.style.use('arviz-darkgrid')\n"
+)
+
+# myst config
+nb_execution_mode = "auto"
+nb_execution_excludepatterns = ["*.ipynb"]
+nb_kernel_rgx_aliases = {".*": "python3"}
+myst_enable_extensions = ["colon_fence", "deflist", "dollarmath", "amsmath"]
+myst_heading_anchors = 0
+
+# Block Plotly from injecting its own version of MathJax
+# Set global engine defaults
+pio.full_figure_for_development = False
+
+# Disable MathJax across all possible renderers
+for renderer in pio.renderers:
+    try:
+        pio.renderers[renderer].include_mathjax = "cdn"
+    except AttributeError:
+        continue
+
+# Sphinx's mathjax_path will be handled automatically by the extension/theme.
+# This config is compatible with both MathJax 3 and 4.
+mathjax3_config = {
+    "tex": {
+        "inlineMath": [["\\(", "\\)"]],
+        "displayMath": [["\\[", "\\]"]],
+        "processEscapes": True,
+    },
+    "options": {
+        # 'ignoreHtmlClass' is the modern standard for both v3 and v4.
+        # We include 'tex2jax_ignore' for v2/v3 compatibility and
+        # 'plotly-graph-div' to stop MathJax from touching Plotly SVGs.
+        "ignoreHtmlClass": "tex2jax_ignore|plotly-graph-div",
+        "processHtmlClass": "tex2jax_process",
+    },
+}
+
+# numpydoc and autodoc typehints config
+numpydoc_show_class_members = False
+numpydoc_xref_param_type = True
+# fmt: off
+numpydoc_xref_ignore = {
+    "of", "or", "optional", "default", "numeric", "type", "scalar", "1D", "2D", "3D", "nD", "array",
+    "instance", "M", "N"
+}
+# fmt: on
+numpydoc_xref_aliases = {
+    "TensorVariable": ":class:`~pytensor.tensor.TensorVariable`",
+    "RandomVariable": ":class:`~pytensor.tensor.random.RandomVariable`",
+    "ndarray": ":class:`~numpy.ndarray`",
+    "DataTree": ":class:`~xarray.DataTree`",
+    "Model": ":class:`~pymc.Model`",
+    "tensor_like": ":term:`tensor_like`",
+    "unnamed_distribution": ":term:`unnamed_distribution`",
+}
+# don't add a return type section, use standard return with type info
+typehints_document_rtype = False
+
+# intersphinx configuration to ease linking arviz docs
+intersphinx_mapping = {
+    "arviz": ("https://python.arviz.org/en/latest/", None),
+    "examples": ("https://www.pymc.io/projects/examples/en/latest/", None),
+    "mpl": ("https://matplotlib.org/stable", None),
+    "numpy": ("https://numpy.org/doc/stable/", None),
+    "pandas": ("https://pandas.pydata.org/pandas-docs/stable/", None),
+    "pymc": ("https://www.pymc.io/projects/docs/en/stable/", None),
+    "pytensor": ("https://pytensor.readthedocs.io/en/latest/", None),
+    "python": ("https://docs.python.org/3/", None),
+    "scipy": ("https://docs.scipy.org/doc/scipy/", None),
+    "xarray": ("https://docs.xarray.dev/en/stable/", None),
+}
+
+# Prefer cross-reference roles over hard-coded URLs when pointing at an API of
+# any project listed above, e.g. {func}`pymc.sample` instead of a literal link
+# to the pymc docs. Renamed or moved objects then surface as a warning, which
+# the docs build turns into an error (-W), instead of silently rotting into a
+# 404 on the published site.
+
+# `sphinx-build docs/source docs/build -b linkcheck` catches the hard-coded
+# links that remain. Anchors are not checked: many targets render them client
+# side, which produces false positives.
+linkcheck_anchors = False
+linkcheck_timeout = 30
+linkcheck_retries = 2
+linkcheck_ignore = [
+    # Rate-limits or blocks CI traffic.
+    r"https://(www\.)?linkedin\.com/.*",
+    r"https://(twitter|x)\.com/.*",
+    r"https://calendly\.com/.*",
+    r"https://discord\.(gg|com)/.*",
+]
+
+
+# linkcode extension (links of [source] pointing to github)
+def linkcode_resolve(domain, info):
+    """Given sphinx contextual objects when building the docs, generate links to source on GH."""
+
+    def find_obj() -> object:
+        # try to find the file and line number, based on code from numpy:
+        # https://github.com/numpy/numpy/blob/master/doc/source/conf.py#L286
+        obj = sys.modules[info["module"]]
+        for part in info["fullname"].split("."):
+            obj = getattr(obj, part)
+        return obj
+
+    def find_source(obj):
+        fn = Path(inspect.getsourcefile(obj))
+        fn = fn.relative_to(Path(pymc_marketing.__file__).parent)
+        source, lineno = inspect.getsourcelines(obj)
+        return fn, lineno, lineno + len(source) - 1
+
+    def fallback_source():
+        return info["module"].replace(".", "/") + ".py"
+
+    if domain != "py" or not info["module"]:
+        return None
+
+    try:
+        obj = find_obj()
+    except Exception:
+        filename = fallback_source()
+    else:
+        try:
+            path, start_line, end_line = find_source(obj)
+            filename = f"pymc_marketing/{path}#L{start_line}-L{end_line}"
+        except Exception:
+            try:
+                filename = obj.__module__.replace(".", "/") + ".py"
+            except AttributeError:
+                # Some objects do not have a __module__ attribute (?)
+                filename = fallback_source()
+
+    tag = subprocess.Popen(
+        ["git", "rev-parse", "HEAD"],  # noqa: S607
+        stdout=subprocess.PIPE,
+        universal_newlines=True,
+    ).communicate()[0][:-1]
+    return f"https://github.com/pymc-labs/pymc-marketing/blob/{tag}/{filename}"
+
+
+# -- HTML specific extensions -------------------------------------
+
+# configure notfound extension
+notfound_urls_prefix = "/en/latest/"
+
+# opengraph metadata settings
+ogp_site_url = "https://www.pymc-marketing.io/en/stable/"
+ogp_canonical_url = "https://www.pymc-marketing.io/en/stable/"
+ogp_image = "https://www.pymc-marketing.io/en/stable/_images/marketing-logo-light.jpg"
+# Auto-generate <meta name="description"> from the first paragraph of each
+# page. Pages that declare their own description (e.g. index.md) are skipped.
+ogp_enable_meta_description = True
+
+
+# sitemap extension configuration
+site_url = "https://www.pymc-marketing.io/"
+sitemap_url_scheme = f"{{lang}}{rtd_version}/{{link}}"
+# Keep thin auto-generated pages out of the sitemap so crawl budget goes to
+# real content. The classmethods stubs alone are ~80% of all pages and sit in
+# Search Console as "Crawled - currently not indexed".
+sitemap_excludes = [
+    "search.html",
+    "genindex.html",
+    "py-modindex.html",
+    "api/generated/classmethods/*",
+]
+
+
+# -- Options for HTML output ----------------------------------------------
+
+# The theme to use for HTML and HTML Help pages.  See the documentation for
+# a list of builtin themes.
+html_theme = "labs_sphinx_theme"
+html_extra_path = ["robots.txt", "llms.txt"]
+html_copy_source = (
+    False  # don't include rst source files as _sources/...txt in the build
+)
+
+html_favicon = "_static/favicon.ico"
+
+# Theme options are theme-specific and customize the look and feel of a theme
+# further.  For a list of options available for each theme, see the
+# documentation.
+html_theme_options = {
+    "logo": {
+        "image_light": "flat_logo.png",
+        "image_dark": "flat_logo_darkmode.png",
+    },
+    "analytics": {"google_analytics_id": "G-DNPNG22HVY"},
+}
+html_context = {
+    "github_user": "pymc-labs",
+    "github_repo": "pymc-marketing",
+    "github_version": "main",
+    "doc_path": "docs/source/",
+    "default_mode": "light",
+    # No trailing slash: the theme's layout.html builds the canonical URL as
+    # "{baseurl}/{language}/stable/{pagename}.html". A trailing slash here
+    # produced broken canonicals ("https://www.pymc-marketing.io//en/...").
+    "baseurl": "https://www.pymc-marketing.io",
+    "rtd_version": rtd_version,
+    "translations": ["en", "es"],
+}
+
+# Add any paths that contain custom static files (such as style sheets) here,
+# relative to this directory. They are copied after the builtin static files,
+# so a file named "default.css" will overwrite the builtin "default.css".
+html_static_path = ["_static/"]
+html_css_files = ["custom.css", "fold-code-cells.css"]
+# Folds notebook code cells by default so example pages lead with narrative
+# and outputs instead of walls of code (#2926).
+html_js_files = ["fold-code-cells.js"]
+
+# -- Options for LaTeX output ---------------------------------------------
+
+# Grouping the document tree into LaTeX files. List of tuples
+# (source start file, target name, title,
+#  author, documentclass [howto, manual, or own class]).
+latex_documents = [
+    (master_doc, "pymc_marketing.tex", "pymc_marketing Documentation", author, "manual")
+]
+
+# -- Options for manual page output ---------------------------------------
+
+# One entry per manual page. List of tuples
+# (source start file, name, description, authors, manual section).
+man_pages = [
+    (master_doc, "pymc_marketing", "pymc_marketing Documentation", [author], 1)
+]
+
+# -- Options for Texinfo output -------------------------------------------
+
+# Grouping the document tree into Texinfo files. List of tuples
+# (source start file, target name, title, author,
+#  dir menu entry, description, category)
+texinfo_documents = [
+    (
+        master_doc,
+        "pymc_marketing",
+        "pymc_marketing Documentation",
+        author,
+        "pymc_marketing",
+        "Bayesian MMMs and CLVs in PyMC.",
+        "Miscellaneous",
+    )
+]
+
+
+def scrub_plotly_mathjax(app, pagename, templatename, context, doctree):
+    """Remove Plotly's forced MathJax 2.7.5 injection from the final HTML."""
+    if "body" in context:
+        # This targets the specific CDN Plotly always uses
+        bad_script = "https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.5/MathJax.js"
+        context["body"] = context["body"].replace(
+            f'<script src="{bad_script}', '<script data-blocked="true"'
+        )
+
+
+def setup(app):
+    """Configure Sphinx application event handlers.
+
+    Connects the Plotly MathJax scrubbing function to the html-page-context event.
+    """
+    # Connect the scrubbing function to the html-page-context event
+    app.connect("html-page-context", scrub_plotly_mathjax)

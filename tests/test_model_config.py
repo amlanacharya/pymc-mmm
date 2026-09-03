@@ -1,0 +1,217 @@
+#   Copyright 2022 - 2026 The PyMC Labs Developers
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+
+import numpy as np
+import pytest
+from pymc_extras.prior import Prior
+
+from pymc_marketing.hsgp_kwargs import HSGPKwargs
+from pymc_marketing.model_config import ModelConfigError, parse_model_config
+
+
+@pytest.fixture
+def model_config():
+    return {
+        "beta": Prior("Normal", mu=0.0, sigma=1.0),
+        "alpha": Prior(
+            "Normal",
+            mu=Prior("Normal", mu=0.0, sigma=1.0),
+            sigma=Prior("HalfNormal", sigma=1.0),
+            dims="channel",
+        ),
+        "gamma": Prior(
+            "Normal",
+            mu=Prior("Normal", mu=0.0, sigma=1.0, dims="channel"),
+            sigma=Prior("HalfNormal", sigma=1.0, dims="geo"),
+            dims=("channel", "geo"),
+        ),
+        "delta": Prior(
+            "Normal",
+            mu=np.array([1.0]),
+            sigma=np.array([1.0, 2.0, 3.0])[:, None],
+            dims=("channel", "control"),
+        ),
+        "hierarchical_centered": Prior(
+            "Normal",
+            mu=Prior("Normal", mu=0.0, sigma=1.0, dims="channel"),
+            sigma=Prior("HalfNormal", sigma=1.0, dims="geo"),
+            dims=("channel", "geo"),
+        ),
+        "hierarchical_non_centered": Prior(
+            "Normal",
+            mu=Prior("HalfNormal", sigma=2),
+            sigma=Prior("HalfNormal", sigma=1),
+            dims="channel",
+            centered=False,
+        ),
+        "hierarchical_non_centered_2d": Prior(
+            "Normal",
+            mu=Prior("Normal", mu=0.0, sigma=1.0, dims="channel"),
+            sigma=Prior("HalfNormal", sigma=1.0, dims="geo"),
+            dims=("channel", "geo"),
+            centered=False,
+        ),
+        "intercept_tvp_config": {
+            "m": 200,
+            "L": 119.17,
+            "eta_lam": 1.0,
+            "ls_mu": 5.0,
+            "ls_sigma": 10.0,
+            "cov_func": None,
+        },
+        "non_distribution": {
+            "key": "This is not a distribution",
+        },
+    }
+
+
+def test_parse_model_config(model_config) -> None:
+    ignore_keys = ["delta"]
+    to_parse = {
+        name: value for name, value in model_config.items() if name not in ignore_keys
+    }
+
+    result = parse_model_config(
+        to_parse,
+        hsgp_kwargs_fields=["intercept_tvp_config"],
+    )
+
+    assert result == {
+        "beta": Prior("Normal", mu=0.0, sigma=1.0),
+        "alpha": Prior(
+            "Normal",
+            mu=Prior("Normal", mu=0.0, sigma=1.0),
+            sigma=Prior("HalfNormal", sigma=1.0),
+            dims="channel",
+        ),
+        "gamma": Prior(
+            "Normal",
+            mu=Prior("Normal", mu=0.0, sigma=1.0, dims="channel"),
+            sigma=Prior("HalfNormal", sigma=1.0, dims="geo"),
+            dims=("channel", "geo"),
+        ),
+        "hierarchical_centered": Prior(
+            "Normal",
+            mu=Prior("Normal", mu=0.0, sigma=1.0, dims="channel"),
+            sigma=Prior("HalfNormal", sigma=1.0, dims="geo"),
+            dims=("channel", "geo"),
+        ),
+        "hierarchical_non_centered": Prior(
+            "Normal",
+            mu=Prior("HalfNormal", sigma=2),
+            sigma=Prior("HalfNormal", sigma=1),
+            dims="channel",
+            centered=False,
+        ),
+        "hierarchical_non_centered_2d": Prior(
+            "Normal",
+            mu=Prior("Normal", mu=0.0, sigma=1.0, dims="channel"),
+            sigma=Prior("HalfNormal", sigma=1.0, dims="geo"),
+            dims=("channel", "geo"),
+            centered=False,
+        ),
+        "intercept_tvp_config": HSGPKwargs(
+            m=200,
+            L=119.17,
+            eta_lam=1.0,
+            ls_mu=5.0,
+            ls_sigma=10.0,
+            cov_func=None,
+        ),
+        "non_distribution": {
+            "key": "This is not a distribution",
+        },
+    }
+
+
+def test_parse_model_config_passes_lists_through() -> None:
+    """Test that list values pass through unchanged."""
+    model_config = {
+        "dropout_covariate_cols": ["channel", "tier"],
+        "alpha": Prior("Normal", mu=0, sigma=1),
+    }
+
+    result = parse_model_config(model_config)
+
+    assert result["dropout_covariate_cols"] == ["channel", "tier"]
+    assert result["alpha"] == Prior("Normal", mu=0, sigma=1)
+
+
+@pytest.mark.parametrize("legacy_key", ["dist", "distribution"])
+def test_parse_model_config_rejects_legacy_prior_spec(legacy_key) -> None:
+    """Legacy dict-format prior specs raise a clear migration error."""
+    model_config = {
+        "alpha": {legacy_key: "Normal", "kwargs": {"mu": 0, "sigma": 1}},
+    }
+
+    with pytest.raises(ModelConfigError, match=r"use pymc_extras\.prior\.Prior"):
+        parse_model_config(model_config)
+
+
+@pytest.mark.parametrize("legacy_key", ["dist", "distribution"])
+def test_parse_model_config_ignores_non_string_legacy_key(legacy_key) -> None:
+    """A non-prior mapping is not flagged just for carrying a `dist` key.
+
+    The legacy check keys on a *string* distribution name, matching the sibling
+    checks in `ModelIO._model_config_formatting` and `mmm.builders.factories`.
+    """
+    model_config = {
+        "settings": {legacy_key: {"nested": "mapping"}, "other": 1},
+    }
+
+    result = parse_model_config(model_config)
+
+    assert result["settings"] == {legacy_key: {"nested": "mapping"}, "other": 1}
+
+
+def test_parse_model_config_rejects_non_distributions() -> None:
+    """The removed `non_distributions` parameter gets a migration hint.
+
+    Without the `**kwargs` guard this is a bare
+    `TypeError: unexpected keyword argument`, which gives no indication that
+    the parameter was removed rather than misspelled.
+    """
+    with pytest.raises(ModelConfigError, match=r"removed in v1\.0\.0"):
+        parse_model_config({}, non_distributions=["alpha"])
+
+
+def test_parse_model_config_rejects_unknown_kwarg() -> None:
+    """An unrelated stray keyword still raises `TypeError`."""
+    with pytest.raises(TypeError, match="Unexpected keyword arguments"):
+        parse_model_config({}, bogus=1)
+
+
+def test_clv_model_base_rejects_non_distributions() -> None:
+    """`CLVModel.__init__` accepted `non_distributions` before v1.0.0.
+
+    Scope note: this covers direct `CLVModel` construction and third-party
+    subclasses that forward `**kwargs`. The shipped subclasses
+    (`BetaGeoModel`, `ParetoNBDModel`, ...) never exposed `non_distributions`
+    in their own signatures -- they passed a hardcoded list to `super()` --
+    so there is no user-facing surface to guard there.
+    """
+    from pymc_marketing.clv.models.basic import CLVModel
+
+    class ConcreteCLVModel(CLVModel):
+        _model_type = "ConcreteCLVModel"
+
+        @property
+        def default_model_config(self):
+            return {"alpha": Prior("Normal", mu=0, sigma=1)}
+
+        def build_model(self) -> None:  # type: ignore[override]
+            raise NotImplementedError
+
+    with pytest.raises(ModelConfigError, match=r"removed in v1\.0\.0"):
+        ConcreteCLVModel(non_distributions=["alpha"])

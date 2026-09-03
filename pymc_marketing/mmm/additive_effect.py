@@ -1,0 +1,1269 @@
+#   Copyright 2022 - 2026 The PyMC Labs Developers
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+"""Additive effects for the multidimensional Marketing Mix Model.
+
+Example of a custom additive effect
+-----------------------------------
+
+1. Custom negative-effect component (added as a MuEffect)
+
+.. code-block:: python
+
+    import numpy as np
+    import pandas as pd
+    import pymc as pm
+    import pymc.dims as pmd
+    from pymc_extras.prior import create_dim_handler
+
+    # A simple custom effect that penalizes certain dates/segments with a
+    # negative-only coefficient. This is not a "control" in the MMM sense, so
+    # give it a different name/prefix to avoid clashing with built-in controls.
+    class PenaltyEffect:
+        '''Example MuEffect that applies a negative coefficient to a user-specified pattern.
+        '''
+
+        def __init__(self, name: str, penalty_provider):
+            self.name = name
+            self.penalty_provider = penalty_provider
+
+        def create_data(self, mmm):
+            # Produce penalty values aligned with model dates (and optional extra dims)
+            dates = safe_to_datetime(mmm.model.coords["date"], "date")
+            penalty = self.penalty_provider(dates)
+            pmd.Data(f"{self.name}_penalty", penalty, dims=("date", *mmm.dims))
+
+        def create_effect(self, mmm):
+            model = mmm.model
+            penalty = model[f"{self.name}_penalty"]  # dims: (date, *mmm.dims)
+
+            # Negative-only coefficient per extra dims, broadcast over date
+            coef = pmd.TruncatedNormal(f"{self.name}_coef", mu=-0.5, sigma=-0.05, lower=-1.0, upper=0.0, dims=mmm.dims)
+
+            dim_handler = create_dim_handler(("date", *mmm.dims))
+            effect = pmd.Deterministic(
+                f"{self.name}_effect_contribution",
+                dim_handler(coef, mmm.dims) * penalty,
+                dims=("date", *mmm.dims),
+            )
+            return effect  # Must have dims ("date", *mmm.dims)
+
+        def set_data(self, mmm, model, X):
+            # Update to future dates during posterior predictive
+            dates = safe_to_datetime(model.coords["date"], "date")
+            penalty = self.penalty_provider(dates)
+            pm.set_data({f"{self.name}_penalty": penalty}, model=model)
+
+    Usage
+    -----
+    # Example weekend penalty (Sat/Sun = 1, else 0), applied per geo if present
+    weekend_penalty = PenaltyEffect(
+        name="brand_penalty",
+        penalty_provider=lambda dates: pd.Series(dates)
+        .dt.dayofweek.isin([5, 6])
+        .astype(float)
+        .to_numpy()[:, None]  # if mmm.dims == ("geo",), broadcast over geo
+    )
+
+    # Build your MMM as usual (with channels, etc.), then add the effect before build/fit:
+    # mmm = MMM(...)
+    # mmm.add_mu_effect(weekend_penalty)
+    # mmm.build_model(X, y)
+    # mmm.fit(X, y, ...)
+    # At prediction time, the effect updates itself via set_data.
+
+How it works
+------------
+- Mu effects follow a simple protocol: ``create_data(mmm)``, ``create_effect(mmm)``,
+  and ``set_data(mmm, model, X)``.
+- During ``MMM.build_model(...)``, each effect's ``create_data`` is called first to
+  introduce any needed ``pmd.Data``. Then ``create_effect`` must return a tensor with
+  dims ``("date", *mmm.dims)`` that is added additively to the model mean.
+- During posterior predictive, ``set_data`` is called with the cloned PyMC model
+  and the new coordinates; update any ``pmd.Data`` you created using ``pm.set_data``.
+
+Tips for custom components
+--------------------------
+- Use unique variable prefixes to avoid name clashes with built-in pieces like
+  controls. Do not call your component "control"; choose a distinct name/prefix.
+- Follow the patterns used by the provided effects in this module (e.g.,
+  ``FourierEffect``, ``LinearTrendEffect``, ``EventAdditiveEffect``):
+
+  - In ``create_data``, derive and register any required inputs into the model.
+  - In ``create_effect``, construct PyTensor expressions and return a contribution
+    with dims ``("date", *mmm.dims)``. If you need broadcasting, use
+    ``pymc_extras.prior.create_dim_handler`` as shown above.
+  - In ``set_data``, update the data variables when dates/dims change.
+
+Built-in data-referencing effects
+----------------------------------
+
+The module provides ready-to-use ``MuEffect`` subclasses that read data
+directly from the training ``xr.Dataset``.
+
+``DataVarMuEffect``
+    Abstract base for effects that reference named variables in the Dataset.
+    Subclasses implement ``create_effect``; ``create_data`` and ``set_data``
+    are provided.
+
+``MediaMuEffect(DataVarMuEffect)``
+    Applies a ``MediaTransformation`` (adstock + saturation) to a named
+    media variable, then aggregates over ``channel_dim``.
+
+``ControlMuEffect(DataVarMuEffect)``
+    Applies a configurable prior coefficient to each control variable,
+    automatically summing extra dimensions.
+
+Example: multi-granularity media and controls
+..............................................
+
+.. code-block:: python
+
+    from pymc_marketing.mmm import MMM, GeometricAdstock, LogisticSaturation
+    from pymc_marketing.mmm.additive_effect import (
+        MediaMuEffect,
+        ControlMuEffect,
+    )
+    from pymc_marketing.mmm.media_transformation import MediaTransformation
+
+    # X is an xr.Dataset with:
+    #   media_product:      (date, product, product-channel)
+    #   media_geo:          (date, geo, geo-channel)
+    #   control_national:   (date,)
+    #   control_product:    (date, product)
+
+    mmm = (
+        MMM(
+            date_column="date",
+            channel_columns=["tv", "digital"],
+            dims=("product", "geo"),
+            adstock=GeometricAdstock(l_max=8),
+            saturation=LogisticSaturation(),
+        )
+        .add_mu_effect(
+            MediaMuEffect(
+                data_vars=["media_product"],
+                media_transformation=MediaTransformation(
+                    adstock=GeometricAdstock(l_max=8),
+                    saturation=LogisticSaturation(),
+                    adstock_first=True,
+                    dims=("product", "product-channel"),
+                ),
+                channel_dim="product-channel",
+                prefix="product_media",
+            )
+        )
+        .add_mu_effect(
+            MediaMuEffect(
+                data_vars=["media_geo"],
+                media_transformation=MediaTransformation(
+                    adstock=GeometricAdstock(l_max=8),
+                    saturation=LogisticSaturation(),
+                    adstock_first=True,
+                    dims=("geo", "geo-channel"),
+                ),
+                channel_dim="geo-channel",
+                prefix="geo_media",
+            )
+        )
+        .add_mu_effect(
+            ControlMuEffect(
+                data_vars=["control_national"],
+                prefix="national_ctrl",
+            )
+        )
+        .add_mu_effect(
+            ControlMuEffect(
+                data_vars=["control_product"],
+                prefix="product_ctrl",
+            )
+        )
+    )
+
+    mmm.fit(X, y)
+
+Each grain uses a distinct dimension name (``"product-channel"`` vs
+``"geo-channel"``) to avoid xarray's coordinate union and the ``NaN``
+values it would produce.  ``ControlMuEffect`` uses a scalar
+``Prior("Normal", ...)`` by default, broadcasting across all dimensions;
+pass ``Prior("Normal", mu=0, sigma=2, dims="product")`` for per-product
+coefficients.
+
+.. note::
+
+    ``MediaMuEffect`` does not apply any automatic scaling.  Media data
+    should be pre-scaled (e.g. max-scaling) before being placed in the
+    ``xr.Dataset``, or users can create a custom ``MuEffect`` that wraps
+    ``MediaMuEffect`` with scaling logic.
+"""
+
+from abc import ABC, abstractmethod
+from typing import Annotated, Any, Literal, Protocol
+
+import numpy as np
+import numpy.typing as npt
+import pandas as pd
+import pymc as pm
+import pymc.dims as pmd
+import pytensor.xtensor as ptx
+import xarray as xr
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    InstanceOf,
+    StrictInt,
+)
+from pymc_extras.prior import Prior, VariableFactory
+from pytensor.xtensor.type import XTensorVariable
+
+from pymc_marketing.mmm.events import EventEffect, days_from_reference
+from pymc_marketing.mmm.fourier import FourierBase
+from pymc_marketing.mmm.linear_trend import LinearTrend
+from pymc_marketing.mmm.media_transformation import MediaTransformation
+from pymc_marketing.mmm.validating import _validate_non_numeric_dtype
+from pymc_marketing.serialization import SerializableBaseModel, serialization
+
+
+def safe_to_datetime(
+    coords_values: pd.Series | pd.Index | list | tuple | pd.DatetimeIndex | npt.NDArray,
+    coord_name: str = "date",
+    validate_non_numeric: bool = True,
+) -> pd.DatetimeIndex:
+    """Safely convert coordinates to datetime, with validation.
+
+    This function prevents the issue where numeric values (e.g., [0, 1, 2, 3])
+    get incorrectly converted to dates starting from January 1st 1970 with
+    nanosecond intervals.
+
+    Parameters
+    ----------
+    coords_values : pd.Series | pd.Index | list | tuple | pd.DatetimeIndex | npt.NDArray
+        The coordinate values to convert to datetime
+    coord_name : str, optional
+        The name of the coordinate dimension (default: "date")
+    validate_non_numeric : bool, optional
+        Whether to validate that values are not numeric dtype. Set to False
+        when intentionally converting numeric time indices. Default: True
+
+    Returns
+    -------
+    pd.DatetimeIndex
+        The converted datetime index
+
+    Raises
+    ------
+    ValueError
+        If the coordinate values have numeric dtype and validate_non_numeric is True
+
+    Examples
+    --------
+    >>> # Good usage - string dates
+    >>> safe_to_datetime(["2024-01-01", "2024-01-02"])
+
+    >>> # Good usage - already datetime
+    >>> safe_to_datetime(pd.to_datetime(["2024-01-01", "2024-01-02"]))
+
+    >>> # Raises error - numeric values with validation
+    >>> safe_to_datetime([0, 1, 2, 3])  # Raises ValueError
+
+    >>> # Allowed - numeric time indices with validation disabled
+    >>> safe_to_datetime([0, 1, 2, 3], validate_non_numeric=False)
+    """
+    # Convert to pandas Series/Index for dtype checking
+    if isinstance(coords_values, pd.DatetimeIndex):
+        # Already datetime, return as-is
+        return coords_values
+
+    # Validate that values are not numeric dtype (if requested)
+    if validate_non_numeric:
+        _validate_non_numeric_dtype(coords_values, f"Coordinate '{coord_name}'")
+
+    result = pd.to_datetime(coords_values)
+    # Ensure we always return DatetimeIndex, not Series
+    if isinstance(result, pd.Series):
+        return pd.DatetimeIndex(result)
+    return result
+
+
+def _get_datetime_coords(
+    coords: pd.Index | npt.NDArray,
+    coord_name: str,
+) -> pd.DatetimeIndex:
+    """Get datetime coordinates with automatic validation logic.
+
+    Automatically skips numeric validation for non-date coordinate names
+    (e.g., 'time'), allowing numeric indices for customer choice models.
+
+    Parameters
+    ----------
+    coords : pd.Index | npt.NDArray
+        The coordinate values from the model
+    coord_name : str
+        The name of the coordinate dimension
+
+    Returns
+    -------
+    pd.DatetimeIndex
+        The converted datetime index
+    """
+    # Skip validation for non-date coordinates (e.g., numeric "time" indices)
+    validate = coord_name == "date"
+    return safe_to_datetime(coords, coord_name, validate_non_numeric=validate)
+
+
+class Model(Protocol):
+    """Protocol MMM."""
+
+    @property
+    def dims(self) -> tuple[str, ...]:
+        """The additional dimensions of the MMM target."""
+
+    @property
+    def model(self) -> pm.Model:
+        """The PyMC model."""
+
+    @property
+    def xarray_dataset(self) -> xr.Dataset:
+        """Training data for the model and its additive effects.
+
+        Contains named data variables at arbitrary granularities that
+        ``MuEffect`` subclasses reference via ``data_vars``.
+        Variables may include media spend at different dimensionalities,
+        control variables, event indicators, or any other input needed
+        by the model's additive components, all sharing a single
+        ``date`` coordinate across the dataset.
+        """
+
+
+def _accept_numpy_integer(value: Any) -> Any:
+    """Let a NumPy integer stand in for a Python one.
+
+    ``StrictInt`` is here to refuse ``True`` and ``2.0``, both of which would
+    otherwise size an evaluation window without anyone noticing.  It also
+    refuses ``np.int64``, which is not the same kind of mistake: it is what a
+    caller gets from the shape or ``l_max`` of anything array-backed.
+    """
+    return int(value) if isinstance(value, np.integer) else value
+
+
+CarryoverLags = Annotated[
+    StrictInt, BeforeValidator(_accept_numpy_integer), Field(ge=0)
+]
+"""A non-negative window length, tolerant of NumPy integers but not of ``bool``."""
+
+
+class IncrementalitySpec(BaseModel):
+    r"""Declaration that an effect may take part in incrementality analysis.
+
+    Returned by :meth:`MuEffect.incrementality_spec`.  Only effects whose
+    contribution depends on ``channel_data`` need one: a spend counterfactual
+    cannot reach any other effect, so those are part of the baseline and are
+    left alone.
+
+    Nothing has to be filled in.  An empty ``IncrementalitySpec()`` opts the
+    effect in and lets
+    :class:`~pymc_marketing.mmm.incrementality.Incrementality` work the rest out
+    from the graph: the date-indexed ``pm.Data`` the effect reads is discovered
+    by traversal, and how far in time the effect carries a change in spend is
+    *measured* by perturbing one date and watching where the contribution moves.
+    The fields below override that measurement when a caller would rather state
+    the answer than have it derived.
+
+    Parameters
+    ----------
+    additional_carryover_lags : int, optional
+        Number of periods *beyond* the model's own ``adstock.l_max`` over which
+        a change in spend at time *t* can still move this effect's contribution.
+        For an effect that chains a second adstock behind the model's -- as a
+        funnel mediator does, with ``upper_transform`` feeding
+        ``demand_transform`` -- it is the ``l_max`` of that second adstock.
+        Left at ``None`` it is measured.  A declared value is allowed to be
+        *larger* than the measured reach (a wider window only costs compute) but
+        a smaller one is rejected, since it would silently truncate the mediated
+        tail and understate the increment.
+    evaluation_mode : {"auto", "window", "full"}, default="auto"
+        How much of the date axis the effect needs to see to be evaluated
+        correctly.  ``"window"`` is the cheap case: the effect propagates spend
+        forward over a bounded number of periods, so a counterfactual can be
+        evaluated on a window around each period.  ``"full"`` is required by an
+        effect that reads the whole series at once -- anything with a reduction
+        over ``date``, such as a normalisation by ``x.mean("date")`` -- because
+        such an effect takes a different value on a truncated axis.  ``"auto"``
+        measures which of the two applies.
+
+    Examples
+    --------
+    Opt in and let everything be measured:
+
+    .. code-block:: python
+
+        class FunnelEffect(DataVarMuEffect):
+            def incrementality_spec(self) -> IncrementalitySpec:
+                return IncrementalitySpec()
+
+    Declare the carryover instead, for a funnel whose mediator applies a second
+    adstock of ``l_max=8``:
+
+    .. code-block:: python
+
+        class FunnelEffect(DataVarMuEffect):
+            def incrementality_spec(self) -> IncrementalitySpec:
+                return IncrementalitySpec(
+                    additional_carryover_lags=self.demand_transform.adstock.l_max
+                )
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid", validate_assignment=True)
+
+    additional_carryover_lags: CarryoverLags | None = None
+    evaluation_mode: Literal["auto", "window", "full"] = "auto"
+
+
+class MuEffect(SerializableBaseModel, ABC):
+    """Abstract base class for arbitrary additive mu effects.
+
+    All mu_effects must inherit from this Pydantic BaseModel to ensure proper
+    serialization and deserialization when saving/loading MMM models.
+    """
+
+    @abstractmethod
+    def create_data(self, mmm: Model) -> None:
+        """Create the required data in the model."""
+
+    @abstractmethod
+    def create_effect(self, mmm: Model) -> XTensorVariable:
+        """Create the additive effect in the model."""
+
+    @abstractmethod
+    def set_data(self, mmm: Model, model: pm.Model, X: xr.Dataset) -> None:
+        """Set the data for new predictions."""
+
+    @property
+    def contribution_var_name(self) -> str:
+        """Name of the posterior deterministic holding this effect's contribution.
+
+        Used by :meth:`MMM.compute_counterfactual_contributions_dataset` to
+        locate the effect's linear-predictor contribution and include it in
+        the decomposition.  The default assumes the effect registers
+        ``f"{self.prefix}_effect_contribution"`` (the convention used by
+        :class:`LinearTrendEffect` and :class:`EventEffect`); effects that
+        register a different name must override this property.
+
+        Raises
+        ------
+        NotImplementedError
+            If the effect has no ``prefix`` attribute and does not override
+            this property.
+        """
+        prefix = getattr(self, "prefix", None)
+        if prefix is None:
+            raise NotImplementedError(
+                f"{type(self).__name__} must define 'contribution_var_name'."
+            )
+        return f"{prefix}_effect_contribution"
+
+    def incrementality_spec(self) -> IncrementalitySpec | None:
+        """Opt this effect in to spend-counterfactual incrementality analysis.
+
+        :class:`~pymc_marketing.mmm.incrementality.Incrementality` perturbs
+        ``channel_data`` and reads the resulting change in the linear predictor.
+        An effect that depends on ``channel_data`` -- a funnel mediator, say --
+        carries part of that change, and is only included in the increment if it
+        returns a spec here.
+
+        The default returns ``None``, which is correct for every effect whose
+        contribution does not depend on ``channel_data``: such an effect belongs
+        to the baseline, is unaffected by the counterfactual, and is skipped
+        without ever consulting this method.  An effect that *does* depend on
+        ``channel_data`` and returns ``None`` raises ``NotImplementedError``
+        rather than being silently dropped from the increment.
+
+        Opting in costs one line -- ``return IncrementalitySpec()`` -- because
+        the spec's fields are overrides for quantities that are otherwise
+        measured from the graph.
+
+        Returns
+        -------
+        IncrementalitySpec or None
+            ``None`` to opt out.
+
+        See Also
+        --------
+        IncrementalitySpec : What has to be declared, and why.
+        """
+        return None
+
+    def idata_groups(self) -> dict[str, xr.Dataset]:
+        """Return supplementary data groups to store in DataTree.
+
+        Override in subclasses that need to persist large DataFrames or
+        other non-JSON-serializable data alongside the model.
+
+        Each entry is stored as a top-level group in the DataTree
+        netCDF file during ``save()`` and is available to custom
+        deserializers via ``DeserializationContext(idata=...)``.
+
+        Returns
+        -------
+        dict[str, xr.Dataset]
+            Group name to xarray Dataset mapping.
+        """
+        return {}
+
+
+class DataVarMuEffect(MuEffect, ABC):
+    """MuEffect that reads its data from the xarray Dataset.
+
+    Subclasses only need to implement ``create_effect``.
+    ``create_data`` and ``set_data`` are provided by default.
+
+    Parameters
+    ----------
+    data_vars : list[str]
+        Names of the data variables in ``mmm.xarray_dataset`` to register
+        as PyMC data variables.  At least one variable is required.
+    prefix : str
+        Prefix for effect variable names.
+    """
+
+    data_vars: Annotated[list[str], Field(min_length=1)]
+    prefix: str
+
+    def create_data(self, mmm: Model) -> None:
+        """Register each data variable as ``pm.Data``.
+
+        Parameters
+        ----------
+        mmm : Model
+            The MMM model instance.
+        """
+        for var_name in self.data_vars:
+            da = mmm.xarray_dataset[var_name]
+            pmd.Data(var_name, da.values, dims=da.dims)
+
+    @abstractmethod
+    def create_effect(self, mmm: Model) -> XTensorVariable:
+        """Create the additive effect in the model."""
+
+    def set_data(self, mmm: Model, model: pm.Model, X: xr.Dataset) -> None:
+        """Update ``pm.Data`` variables from a new prediction dataset.
+
+        Parameters
+        ----------
+        mmm : Model
+            The MMM model instance.
+        model : pm.Model
+            The PyMC model.
+        X : xr.Dataset
+            The new prediction dataset.
+        """
+        for var_name in self.data_vars:
+            if var_name in X.data_vars:
+                pm.set_data({var_name: X[var_name].values}, model=model)
+
+
+class MediaMuEffect(DataVarMuEffect):
+    """Effect that applies a media transformation to a data variable.
+
+    Parameters
+    ----------
+    data_vars : list[str]
+        Names of the media data variables in ``mmm.xarray_dataset``.
+        Typically a single element, e.g. ``["media_product"]``.
+    media_transformation : MediaTransformation
+        Transformation combining adstock and saturation with configurable order.
+        Its ``dims`` must include the channel dimension plus any extra dims
+        (e.g. ``("product", "channel")``).
+    channel_dim : str, optional
+        Name of the channel dimension to aggregate over.
+        Default is ``"channel"``.
+    prefix : str
+        Prefix for effect variable names.
+    """
+
+    media_transformation: InstanceOf[MediaTransformation]
+    channel_dim: str = "channel"
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    @property
+    def effect_dims(self) -> tuple[str, ...]:
+        """Dimensions of this effect (``media_transformation.dims`` minus the channel dimension)."""
+        return tuple(d for d in self.media_transformation.dims if d != self.channel_dim)
+
+    def create_data(self, mmm: Model) -> None:
+        """Set prior dims and register data variables.
+
+        Parameters
+        ----------
+        mmm : Model
+            The MMM model instance.
+        """
+        prior_dims = self.media_transformation.dims
+        self.media_transformation.adstock = (
+            self.media_transformation.adstock.with_default_prior_dims(prior_dims)
+        )
+        self.media_transformation.saturation = (
+            self.media_transformation.saturation.with_default_prior_dims(prior_dims)
+        )
+        super().create_data(mmm)
+
+    def create_effect(self, mmm: Model) -> XTensorVariable:
+        """Apply the media transformation, sum over the channel dimension.
+
+        Parameters
+        ----------
+        mmm : Model
+            The MMM model instance.
+
+        Returns
+        -------
+        XTensorVariable
+            The media contribution with dims ``("date", *effect_dims)``.
+        """
+        var_name = self.data_vars[0]
+        data = mmm.model[var_name]
+        effect = self.media_transformation(data, dim="date")
+        return pmd.Deterministic(
+            f"{self.prefix}_effect_contribution",
+            effect.sum(dim=self.channel_dim),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a dict."""
+        return {
+            "data_vars": self.data_vars,
+            "channel_dim": self.channel_dim,
+            "media_transformation": self.media_transformation.to_dict(),
+            "prefix": self.prefix,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "MediaMuEffect":
+        """Reconstruct from a dict."""
+        work = {k: v for k, v in data.items() if k != "__type__"}
+        return cls(
+            data_vars=work["data_vars"],
+            channel_dim=work.get("channel_dim", "channel"),
+            media_transformation=serialization.deserialize(
+                work["media_transformation"]
+            ),
+            prefix=work["prefix"],
+        )
+
+
+class ControlMuEffect(DataVarMuEffect):
+    """Effect that applies a user-configurable prior to each control variable.
+
+    Parameters
+    ----------
+    data_vars : list[str]
+        Names of the control data variables in ``mmm.xarray_dataset``.
+    prefix : str
+        Prefix for effect variable names.
+    prior : Prior, optional
+        Prior distribution for the control coefficients.
+        Default is ``Prior("Normal", mu=0, sigma=2)``.
+    """
+
+    prior: VariableFactory = Prior("Normal", mu=0, sigma=2)
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    def create_effect(self, mmm: Model) -> XTensorVariable:
+        """Create coefficients for each control variable and sum contributions.
+
+        Parameters
+        ----------
+        mmm : Model
+            The MMM model instance.
+
+        Returns
+        -------
+        XTensorVariable
+            The total control contribution summed over all variables.
+        """
+        model = mmm.model
+        contributions = []
+        for var_name in self.data_vars:
+            data = model[var_name]
+            coef = self.prior.create_variable(
+                f"{self.prefix}_{var_name}_coef",
+                xdist=True,
+            )
+            contributions.append(data * coef)
+        total = sum(contributions)
+        # Sum over any dims not in {"date", *mmm.dims} (e.g. "control")
+        extra_dims = [d for d in set(total.dims) if d not in {"date", *mmm.dims}]
+        if extra_dims:
+            total = total.sum(dim=extra_dims)
+        return pmd.Deterministic(
+            f"{self.prefix}_effect_contribution",
+            total,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a dict."""
+        return {
+            "data_vars": self.data_vars,
+            "prefix": self.prefix,
+            "prior": self.prior.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ControlMuEffect":
+        """Reconstruct from a dict."""
+        from pymc_extras.deserialize import deserialize
+
+        work = {k: v for k, v in data.items() if k != "__type__"}
+        prior_data = work["prior"]
+        if "__type__" in prior_data:
+            prior = serialization.deserialize(prior_data)
+        else:
+            prior = deserialize(prior_data)
+        return cls(
+            data_vars=work["data_vars"],
+            prefix=work["prefix"],
+            prior=prior,
+        )
+
+
+class FourierEffect(MuEffect):
+    """Fourier seasonality additive effect for MMM."""
+
+    fourier: InstanceOf[FourierBase]
+    date_dim_name: str = Field("date")
+
+    @property
+    def contribution_var_name(self) -> str:
+        """Fourier effects register ``f"{fourier.prefix}_contribution"``."""
+        return f"{self.fourier.prefix}_contribution"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a dict. ``__type__`` is injected by the registry wrapper."""
+        return {
+            "fourier": self.fourier.to_dict(),
+            "date_dim_name": self.date_dim_name,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "FourierEffect":
+        """Reconstruct from a dict, using registry for nested Fourier type."""
+        from pymc_marketing.serialization import serialization
+
+        work = {k: v for k, v in data.items() if k != "__type__"}
+        fourier_data = work["fourier"]
+        if "__type__" in fourier_data:
+            fourier = serialization.deserialize(fourier_data)
+        else:
+            from pymc_extras.deserialize import deserialize
+
+            fourier = deserialize(fourier_data)
+        return cls(fourier=fourier, date_dim_name=work.get("date_dim_name", "date"))
+
+    def create_data(self, mmm: Model) -> None:
+        """Create the required data in the model.
+
+        Parameters
+        ----------
+        mmm : MMM
+            The MMM model instance
+        """
+        model = mmm.model
+
+        # Get dates from model coordinates
+        dates = _get_datetime_coords(
+            model.coords[self.date_dim_name], self.date_dim_name
+        )
+
+        # Add weekday data to the model
+        pmd.Data(
+            f"{self.fourier.prefix}_day",
+            self.fourier._get_days_in_period(dates).to_numpy(),
+            dims=self.date_dim_name,
+        )
+
+    def create_effect(self, mmm: Model) -> XTensorVariable:
+        """Create the Fourier effect in the model.
+
+        Parameters
+        ----------
+        mmm : MMM
+            The MMM model instance
+
+        Returns
+        -------
+        XTensorVariable
+            The Fourier effect
+        """
+        model = mmm.model
+
+        # Apply the Fourier transformation to data
+        day_data = model[f"{self.fourier.prefix}_day"]
+
+        # Call apply to create the components deterministic (unsummed basis * betas)
+        fourier_dim = self.fourier.prefix
+        fourier_components = pmd.Deterministic(
+            f"{self.fourier.prefix}_components",
+            self.fourier.apply(day_data, sum=False).transpose(
+                self.date_dim_name, ..., fourier_dim
+            ),
+        )
+
+        return pmd.Deterministic(
+            f"{self.fourier.prefix}_contribution",
+            fourier_components.sum(dim=fourier_dim),
+        )
+
+    def set_data(self, mmm: Model, model: pm.Model, X: xr.Dataset) -> None:
+        """Set the data for new predictions.
+
+        Parameters
+        ----------
+        mmm : MMM
+            The MMM model instance
+        model : pm.Model
+            The PyMC model
+        X : xr.Dataset
+            The dataset for prediction
+        """
+        # Get dates from the new dataset
+        new_dates = _get_datetime_coords(
+            model.coords[self.date_dim_name], self.date_dim_name
+        )
+
+        # Update the data
+        new_data = {
+            f"{self.fourier.prefix}_day": self.fourier._get_days_in_period(
+                new_dates
+            ).to_numpy()
+        }
+        pm.set_data(new_data=new_data, model=model)
+
+
+class LinearTrendEffect(MuEffect):
+    """Wrapper for LinearTrend to use with MMM's MuEffect protocol.
+
+    This class adapts the LinearTrend component to be used as an additive effect
+    in the MMM model.
+
+    Parameters
+    ----------
+    trend : LinearTrend
+        The LinearTrend instance to wrap.
+    prefix : str
+        The prefix to use for variables in the model.
+    date_dim_name : str
+        The name of the date dimension in the model.
+
+    Examples
+    --------
+    Out of sample predictions:
+
+    .. note::
+
+        No new changepoints are used for the out of sample predictions. The trend
+        effect is linearly extrapolated from the last changepoint.
+
+    .. plot::
+        :include-source: True
+        :context: reset
+
+        import pandas as pd
+        import numpy as np
+
+        import matplotlib.pyplot as plt
+
+        import pymc as pm
+        import pymc.dims as pmd
+
+        from pymc_marketing.mmm.linear_trend import LinearTrend
+        from pymc_marketing.mmm.additive_effect import LinearTrendEffect
+
+        seed = sum(map(ord, "LinearTrend out of sample"))
+        rng = np.random.default_rng(seed)
+
+
+        class MockMMM:
+            pass
+
+
+        dates = pd.date_range("2025-01-01", periods=52, freq="W")
+        coords = {"date": dates}
+        model = pm.Model(coords=coords)
+
+        mock_mmm = MockMMM()
+        mock_mmm.dims = ()
+        mock_mmm.model = model
+
+        effect = LinearTrendEffect(
+            trend=LinearTrend(n_changepoints=8),
+            prefix="trend",
+        )
+
+        with mock_mmm.model:
+            effect.create_data(mock_mmm)
+            pmd.Deterministic(
+                "effect",
+                effect.create_effect(mock_mmm),
+                dims="date",
+            )
+
+            idata = pm.sample_prior_predictive(random_seed=rng)
+
+        idata["posterior"] = idata.prior
+
+        n_new = 10 + 1
+        new_dates = pd.date_range(
+            dates.max(),
+            periods=n_new,
+            freq="W",
+        )
+
+
+        with mock_mmm.model:
+            mock_mmm.model.set_dim("date", n_new, new_dates)
+
+            effect.set_data(mock_mmm, mock_mmm.model, None)
+
+            pm.sample_posterior_predictive(
+                idata,
+                var_names=["effect"],
+                random_seed=rng,
+                extend_inferencedata=True,
+            )
+
+        draw = rng.choice(range(idata.posterior.sizes["draw"]))
+        sel = dict(chain=0, draw=draw)
+
+        before = idata.posterior["effect"].sel(sel).to_series()
+        after = idata.posterior_predictive["effect"].sel(sel).to_series()
+
+        ax = before.plot(color="C0")
+        after.plot(color="C0", linestyle="dashed", ax=ax)
+        plt.show()
+
+    """
+
+    trend: InstanceOf[LinearTrend]
+    prefix: str
+    date_dim_name: str = Field("date")
+    linear_trend_first_date: Any = Field(default=None, exclude=True)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a dict. ``__type__`` is injected by the registry wrapper."""
+        return {
+            "trend": self.trend.to_dict(),
+            "prefix": self.prefix,
+            "date_dim_name": self.date_dim_name,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "LinearTrendEffect":
+        """Reconstruct from a dict, using registry for nested LinearTrend."""
+        from pymc_marketing.serialization import serialization
+
+        work = {k: v for k, v in data.items() if k != "__type__"}
+        trend_data = work["trend"]
+        if "__type__" in trend_data:
+            trend = serialization.deserialize(trend_data)
+        else:
+            from pymc_extras.deserialize import deserialize
+
+            trend_dict = trend_data.copy()
+            if trend_dict.get("priors"):
+                trend_dict["priors"] = {
+                    k: deserialize(v) for k, v in trend_dict["priors"].items()
+                }
+            trend = LinearTrend.model_validate(trend_dict)
+        return cls(
+            trend=trend,
+            prefix=work["prefix"],
+            date_dim_name=work.get("date_dim_name", "date"),
+        )
+
+    def create_data(self, mmm: Model) -> None:
+        """Create the required data in the model.
+
+        Parameters
+        ----------
+        mmm : MMM
+            The MMM model instance.
+        """
+        model: pm.Model = mmm.model
+
+        # Create time index data (normalized between 0 and 1)
+        dates = _get_datetime_coords(
+            model.coords[self.date_dim_name], self.date_dim_name
+        )
+        self.linear_trend_first_date = dates[0]
+        t = (dates - self.linear_trend_first_date).days.astype(float)
+
+        pmd.Data(f"{self.prefix}_t", t, dims=self.date_dim_name)
+
+    def create_effect(self, mmm: Model) -> XTensorVariable:
+        """Create the trend effect in the model.
+
+        Parameters
+        ----------
+        mmm : MMM
+            The MMM model instance.
+
+        Returns
+        -------
+        XTensorVariable
+            The trend effect in the model.
+        """
+        model: pm.Model = mmm.model
+
+        # Get the time data
+        t_name = f"{self.prefix}_t"
+        t = model[t_name]
+
+        t_max = t.max()
+        t = t / ptx.math.switch(t_max > 0, t_max, 1)
+        trend_effect = self.trend.apply(t)
+
+        return pmd.Deterministic(
+            f"{self.prefix}_effect_contribution",
+            trend_effect,
+        )
+
+    def set_data(self, mmm: Model, model: pm.Model, X: xr.Dataset) -> None:
+        """Set the data for new predictions.
+
+        Parameters
+        ----------
+        mmm : MMM
+            The MMM model instance.
+        model : pm.Model
+            The PyMC model.
+        X : xr.Dataset
+            The dataset for prediction.
+        """
+        # Create normalized time index for new data
+        new_dates = _get_datetime_coords(
+            model.coords[self.date_dim_name], self.date_dim_name
+        )
+        t = (new_dates - self.linear_trend_first_date).days.astype(float)
+
+        # Update the data
+        pm.set_data({f"{self.prefix}_t": t}, model=model)
+
+
+class EventAdditiveEffect(MuEffect):
+    """Event effect class for the MMM.
+
+    Parameters
+    ----------
+    df_events : pd.DataFrame
+        The DataFrame containing the event data.
+            * `name`: name of the event. Used as the model coordinates.
+            * `start_date`: start date of the event
+            * `end_date`: end date of the event
+    prefix : str
+        The prefix to use for the event effect and associated variables.
+    effect : EventEffect
+        The event effect to apply.
+    reference_date : str
+        The arbitrary reference date to calculate distance from events in days. Default
+        is "2025-01-01".
+    date_dim_name : str
+        The name of the date dimension in the model. Default is "date".
+
+    """
+
+    df_events: InstanceOf[pd.DataFrame]
+    prefix: str
+    effect: EventEffect
+    reference_date: str = "2025-01-01"
+    date_dim_name: str = "date"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a dict with ``__type__`` key.
+
+        The ``df_events`` DataFrame is NOT included in the dict; instead a
+        ``df_events_group`` key stores the idata group path where it lives.
+        """
+        return {
+            "prefix": self.prefix,
+            "reference_date": self.reference_date,
+            "date_dim_name": self.date_dim_name,
+            "effect": self.effect.to_dict(),
+            "df_events_group": f"supplementary_data_{self.prefix}",
+        }
+
+    def model_post_init(self, context: Any, /) -> None:
+        """Post initialization of the model."""
+        if missing_columns := set(["start_date", "end_date", "name"]).difference(
+            self.df_events.columns
+        ):
+            raise ValueError(f"Columns {missing_columns} are missing in df_events.")
+
+        self.effect.basis.prefix = self.prefix
+
+    @property
+    def start_dates(self) -> pd.Series:
+        """The start dates of the events."""
+        return pd.to_datetime(self.df_events["start_date"])
+
+    @property
+    def end_dates(self) -> pd.Series:
+        """The end dates of the events."""
+        return pd.to_datetime(self.df_events["end_date"])
+
+    def create_data(self, mmm: Model) -> None:
+        """Create the required data in the model.
+
+        Parameters
+        ----------
+        mmm : MMM
+            The MMM model instance.
+
+        """
+        model: pm.Model = mmm.model
+
+        model_dates = _get_datetime_coords(
+            model.coords[self.date_dim_name], self.date_dim_name
+        )
+
+        model.add_coord(self.prefix, self.df_events["name"].to_numpy())
+
+        if "days" not in model:
+            pmd.Data(
+                "days",
+                days_from_reference(model_dates, self.reference_date),
+                dims=self.date_dim_name,
+            )
+
+        pmd.Data(
+            f"{self.prefix}_start_diff",
+            days_from_reference(self.start_dates, self.reference_date),
+            dims=self.prefix,
+        )
+        pmd.Data(
+            f"{self.prefix}_end_diff",
+            days_from_reference(self.end_dates, self.reference_date),
+            dims=self.prefix,
+        )
+
+    def create_effect(self, mmm: Model) -> XTensorVariable:
+        """Create the event effect in the model.
+
+        Parameters
+        ----------
+        mmm : MMM
+            The MMM model instance.
+
+        Returns
+        -------
+        XTensorVariable
+            The average event effect in the model.
+
+        """
+        model: pm.Model = mmm.model
+
+        days = model["days"]
+        start_ref = days - model[f"{self.prefix}_start_diff"]
+        end_ref = days - model[f"{self.prefix}_end_diff"]
+
+        def create_basis_matrix(start_ref, end_ref):
+            return ptx.math.where(
+                (start_ref >= 0) & (end_ref <= 0),
+                0,
+                ptx.math.where(
+                    ptx.math.abs(start_ref) < ptx.math.abs(end_ref), start_ref, end_ref
+                ),
+            )
+
+        X = create_basis_matrix(start_ref, end_ref)
+        event_effect = self.effect.apply(X, name=self.prefix)
+
+        return pmd.Deterministic(
+            f"{self.prefix}_total_effect",
+            event_effect.sum(dim=self.prefix),
+        )
+
+    def set_data(self, mmm: Model, model: pm.Model, X: xr.Dataset) -> None:
+        """Set the data for new predictions."""
+        new_dates = _get_datetime_coords(
+            model.coords[self.date_dim_name], self.date_dim_name
+        )
+
+        new_data = {
+            "days": days_from_reference(new_dates, self.reference_date),
+        }
+        pm.set_data(new_data=new_data, model=model)
+
+    def idata_groups(self) -> dict[str, xr.Dataset]:
+        """Return the events DataFrame as a supplementary idata group."""
+        return {
+            f"supplementary_data_{self.prefix}": xr.Dataset.from_dataframe(
+                self.df_events.reset_index(drop=True)
+            ),
+        }
+
+
+def _deserialize_event_additive_effect(
+    data: dict[str, Any],
+    context: Any,
+) -> EventAdditiveEffect:
+    from pymc_marketing.serialization import SerializationError, serialization
+
+    group_name = data["df_events_group"]
+
+    if context is None or context.idata is None:
+        raise SerializationError(
+            f"Cannot deserialize EventAdditiveEffect: no DataTree "
+            f"provided. The df_events DataFrame is stored in idata group "
+            f"'{group_name}' and requires a DeserializationContext with idata."
+        )
+
+    try:
+        ds = context.idata[group_name]
+        if hasattr(ds, "dataset"):
+            ds = ds.dataset
+        df_events = ds.to_dataframe().reset_index()
+    except (KeyError, AttributeError) as e:
+        raise SerializationError(
+            f"Cannot read supplementary data group '{group_name}' from DataTree: {e}"
+        ) from e
+
+    effect_data = data["effect"]
+    if "__type__" in effect_data:
+        effect = serialization.deserialize(effect_data)
+    else:
+        effect = EventEffect.from_dict(effect_data.get("data", effect_data))
+
+    return EventAdditiveEffect(
+        df_events=df_events,
+        effect=effect,
+        prefix=data["prefix"],
+        reference_date=data.get("reference_date", "2025-01-01"),
+        date_dim_name=data.get("date_dim_name", "date"),
+    )
+
+
+def _register_event_additive_effect() -> None:
+    from pymc_marketing.serialization import serialization
+
+    serialization.register(
+        f"{EventAdditiveEffect.__module__}.{EventAdditiveEffect.__qualname__}",
+        EventAdditiveEffect,
+        deserializer=_deserialize_event_additive_effect,
+    )
+
+
+_register_event_additive_effect()
