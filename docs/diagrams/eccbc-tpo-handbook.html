@@ -1,0 +1,545 @@
+<title>TPO Decision Handbook</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+  :root{
+    --bg:#eef1ef; --surface:#ffffff; --ink:#1b2420; --ink-soft:#54615b;
+    --rule:#d6dcd5; --teal:#1f7a6c; --teal-soft:#e2f0ec; --teal-line:#bcdbd2;
+    --amber:#a8721c; --amber-soft:#f7ecd8; --amber-line:#e6cd9c;
+    --code-bg:#f1efe5; --shadow:0 1px 2px rgba(20,30,25,.06),0 8px 24px rgba(20,30,25,.05);
+    --ste-bg:#eef2f6; --ste-line:#c9d6e0; --ste-ink:#2d3e4d;
+    --map-fill:#ffffff; --map-text:#54615b;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#12171a; --surface:#181f23; --ink:#e7ece9; --ink-soft:#9caba4; --rule:#2a3339;
+      --teal:#54c9b0; --teal-soft:#173028; --teal-line:#245047;
+      --amber:#e3ac54; --amber-soft:#2c2313; --amber-line:#4d3c1e;
+      --code-bg:#1d2429; --shadow:0 1px 2px rgba(0,0,0,.3),0 12px 28px rgba(0,0,0,.35);
+      --ste-bg:#182228; --ste-line:#2c3f4a; --ste-ink:#b9cbd8;
+      --map-fill:#181f23; --map-text:#9caba4;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#12171a; --surface:#181f23; --ink:#e7ece9; --ink-soft:#9caba4; --rule:#2a3339;
+    --teal:#54c9b0; --teal-soft:#173028; --teal-line:#245047;
+    --amber:#e3ac54; --amber-soft:#2c2313; --amber-line:#4d3c1e;
+    --code-bg:#1d2429; --shadow:0 1px 2px rgba(0,0,0,.3),0 12px 28px rgba(0,0,0,.35);
+    --ste-bg:#182228; --ste-line:#2c3f4a; --ste-ink:#b9cbd8;
+    --map-fill:#181f23; --map-text:#9caba4;
+  }
+
+  *{box-sizing:border-box;}
+  body{background:var(--bg); color:var(--ink); font-family:'IBM Plex Sans',-apple-system,sans-serif; line-height:1.55; -webkit-font-smoothing:antialiased;}
+  h1,h2,h3{font-family:'Spectral',Georgia,serif; text-wrap:balance; margin:0;}
+  code, .mono{font-family:'IBM Plex Mono',ui-monospace,monospace;}
+  table{border-collapse:collapse; width:100%; font-size:.86rem;}
+  th,td{text-align:left; padding:7px 10px; border-bottom:1px solid var(--rule); vertical-align:top;}
+  th{font-size:.68rem; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-soft); font-weight:600;}
+  .tbl-wrap{overflow-x:auto; margin:12px 0;}
+
+  .shell{display:grid; grid-template-columns:264px minmax(0,1fr); min-height:100vh;}
+  nav.toc{position:sticky; top:0; height:100vh; overflow-y:auto; padding:28px 18px 28px 28px; border-right:1px solid var(--rule);}
+  .brand{font-family:'Spectral',serif; font-weight:600; font-size:1.1rem; margin-bottom:2px;}
+  .brand-sub{font-size:.72rem; color:var(--ink-soft); margin-bottom:18px;}
+  .roadmap-link{display:block; font-size:.78rem; padding:9px 12px; margin-bottom:22px; background:var(--teal-soft); border:1px solid var(--teal-line); border-radius:8px; color:var(--ink); text-decoration:none;}
+  .roadmap-link b{display:block; font-family:'Spectral',serif; font-size:.92rem; margin-bottom:2px;}
+  .toc-list{list-style:none; margin:0; padding:0; font-size:.85rem;}
+  .toc-list li a{display:block; padding:6px 10px; margin-bottom:1px; border-radius:6px; color:var(--ink-soft); text-decoration:none;}
+  .toc-list li a:hover, .toc-list li a.active{color:var(--ink); background:var(--teal-soft);}
+  .toc-list .grp{font-size:.66rem; text-transform:uppercase; letter-spacing:.08em; color:var(--ink-soft); margin:16px 0 6px 10px; opacity:.75;}
+  .toc-list .grp:first-child{margin-top:0;}
+
+  main{padding:56px clamp(20px,5vw,72px) 120px; max-width:980px;}
+  header.hero h1{font-size:2.1rem; font-weight:600;}
+  header.hero .dek{font-size:1rem; color:var(--ink-soft); max-width:64ch; margin-top:12px;}
+
+  section.phase{padding-top:64px; margin-top:-8px; border-top:1px solid var(--rule);}
+  section.phase:first-of-type{border-top:none;}
+  .phase-eyebrow{font-size:.74rem; letter-spacing:.09em; text-transform:uppercase; color:var(--teal); font-weight:500; margin-bottom:8px;}
+  .phase h2{font-size:1.5rem; margin-bottom:22px;}
+
+  .decision{display:grid; grid-template-columns:1fr 108px; gap:20px; align-items:start; background:var(--surface); border:1px solid var(--rule); border-radius:12px; padding:20px 20px 22px; margin-bottom:22px; box-shadow:var(--shadow);}
+  .decision .content{min-width:0;}
+  .decision h3{font-size:1.05rem; font-weight:600; margin-bottom:4px;}
+  .decision .qid{font-size:.7rem; color:var(--ink-soft); font-family:'IBM Plex Mono',monospace; margin-bottom:14px;}
+
+  .map{position:sticky; top:20px; display:flex; flex-direction:column; align-items:center; gap:6px; padding:10px 8px 8px; background:var(--code-bg); border:1px solid var(--rule); border-radius:8px;}
+  .map svg{width:100%; height:auto; display:block;}
+  .map .map-caption{font-size:.6rem; text-transform:uppercase; letter-spacing:.04em; color:var(--ink-soft); text-align:center;}
+  .map rect{fill:var(--map-fill); stroke:var(--rule); stroke-width:1;}
+  .map text{font-family:'IBM Plex Mono',monospace; font-size:7.5px; fill:var(--map-text);}
+  .decision[data-phase="1"] .map g[data-idx="1"] rect,
+  .decision[data-phase="2"] .map g[data-idx="2"] rect,
+  .decision[data-phase="3"] .map g[data-idx="3"] rect,
+  .decision[data-phase="4"] .map g[data-idx="4"] rect,
+  .decision[data-phase="5"] .map g[data-idx="5"] rect,
+  .decision[data-phase="6"] .map g[data-idx="6"] rect{ fill:var(--teal); stroke:var(--teal); }
+  .decision[data-phase="1"] .map g[data-idx="1"] text,
+  .decision[data-phase="2"] .map g[data-idx="2"] text,
+  .decision[data-phase="3"] .map g[data-idx="3"] text,
+  .decision[data-phase="4"] .map g[data-idx="4"] text,
+  .decision[data-phase="5"] .map g[data-idx="5"] text,
+  .decision[data-phase="6"] .map g[data-idx="6"] text{ fill:#ffffff; font-weight:600; }
+
+  .ste{background:var(--ste-bg); border:1px solid var(--ste-line); border-radius:8px; padding:10px 14px; margin-bottom:14px; font-size:.88rem; color:var(--ste-ink);}
+  .ste .ste-label{font-size:.66rem; text-transform:uppercase; letter-spacing:.07em; font-weight:600; margin-bottom:4px; opacity:.8;}
+
+  .row-label{font-size:.72rem; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-soft); font-weight:600; margin:14px 0 6px;}
+  .row-label:first-of-type{margin-top:0;}
+  .options{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:4px;}
+  .opt{font-size:.8rem; padding:4px 11px; background:var(--teal-soft); border:1px solid var(--teal-line); border-radius:20px; color:var(--ink);}
+
+  .why{font-size:.92rem; color:var(--ink-soft); margin-bottom:2px;}
+  .why b{color:var(--ink); font-weight:600;}
+
+  .eccbc{background:var(--amber-soft); border:1px solid var(--amber-line); border-radius:8px; padding:12px 14px; font-size:.88rem; margin-top:10px;}
+  .eccbc .eccbc-label{font-size:.66rem; text-transform:uppercase; letter-spacing:.07em; color:var(--amber); font-weight:600; margin-bottom:4px;}
+
+  .math{background:var(--code-bg); border:1px solid var(--rule); border-radius:8px; padding:12px 16px; overflow-x:auto; margin:10px 0; font-size:.96rem;}
+
+  footer.end{margin-top:60px; padding-top:24px; border-top:1px solid var(--rule); font-size:.78rem; color:var(--ink-soft);}
+
+  @media (max-width:720px){
+    .decision{grid-template-columns:1fr;}
+    .map{position:static; flex-direction:row; width:100%;}
+    .map svg{width:220px;}
+  }
+</style>
+
+<div class="shell">
+  <nav class="toc" id="toc">
+    <div class="brand">TPO Decision Handbook</div>
+    <div class="brand-sub">ECCBC Morocco — pymc-marketing</div>
+    <a class="roadmap-link" href="https://claude.ai/code/artifact/c5955736-eef0-4d38-a16b-4d97a5ddd894" target="_blank" rel="noopener">
+      <b>&#8599; Companion roadmap</b>
+      Open the six-phase flowchart. Every card below also shows its own position in that map, on the right.
+    </a>
+    <ul class="toc-list">
+      <li class="grp">1 · Grain &amp; Data</li>
+      <li><a href="#d-dims">Which dims to model</a></li>
+      <li><a href="#d-target">Which target variable</a></li>
+      <li><a href="#d-grain-check">How to check the grain</a></li>
+      <li class="grp">2 · Calendar &amp; Adstock</li>
+      <li><a href="#d-calendar">What goes on the calendar</a></li>
+      <li><a href="#d-ramadan-split">One event or three</a></li>
+      <li><a href="#d-adstock-type">Adstock per mechanic</a></li>
+      <li><a href="#d-lag-control">Lagged pantry-load control</a></li>
+      <li class="grp">3 · Controls &amp; Saturation</li>
+      <li><a href="#d-controls">Which controls to add</a></li>
+      <li><a href="#d-fourier-k">How many Fourier terms</a></li>
+      <li><a href="#d-saturation">Saturation family</a></li>
+      <li class="grp">4 · Fit &amp; Select</li>
+      <li><a href="#d-link">Link function</a></li>
+      <li><a href="#d-candidates">How many candidates</a></li>
+      <li><a href="#d-cv">Cross-validation scheme</a></li>
+      <li class="grp">5 · Calibrate &amp; ROI</li>
+      <li><a href="#d-lift">Use a lift test?</a></li>
+      <li><a href="#d-reducer">Which incrementality reducer</a></li>
+      <li><a href="#d-net-roi">Gross vs. net ROI</a></li>
+      <li class="grp">6 · Optimize &amp; Validate</li>
+      <li><a href="#d-bounds">Budget scenario bounds</a></li>
+      <li><a href="#d-periods">How far ahead to plan</a></li>
+      <li><a href="#d-sanity">Final sanity check</a></li>
+    </ul>
+  </nav>
+
+  <main>
+    <header class="hero">
+      <h1>TPO Decision Handbook</h1>
+      <p class="dek">Every judgment call behind the ECCBC trade-promo roadmap. Each card shows its position in the six-phase map on the right, the real options, why you'd pick one, and how it plays out for ECCBC Morocco specifically.</p>
+    </header>
+
+    <!-- PHASE 1 -->
+    <section class="phase" id="phase-1">
+      <div class="phase-eyebrow">Phase 1 · Grain &amp; Data</div>
+      <h2>Deciding what you're modeling at</h2>
+
+      <div class="decision" data-phase="1" id="d-dims">
+        <div class="content">
+          <h3>Which dims to model</h3>
+          <div class="qid">dims=(...)</div>
+          <div class="ste"><div class="ste-label">Plain brief</div>Set the model grain to territory, channel, medaille, and SKU, at a weekly interval. Check later if every cell has enough data to support it.</div>
+          <div class="row-label">Initial grain (this build)</div>
+          <div class="options"><span class="opt">territory</span><span class="opt">channel</span><span class="opt">medaille</span><span class="opt">SKU</span><span class="opt">weekly</span></div>
+          <div class="why"><b>Why this grain:</b> this is the full reporting grain ECCBC wants ROI at, so it's the right starting point for <code>dims</code> rather than something to build up to later. The tradeoff from starting here is real and worth watching, not a reason to avoid it: four pooled dims means many territory&times;channel&times;medaille&times;SKU cells, and some will be thin. That's what Phase 1's grain check (next card) is for — it doesn't mean drop a dim, it means know which cells to trust yet.</div>
+          <div class="eccbc"><div class="eccbc-label">ECCBC example</div><code>dims=("territory","channel","medaille","sku")</code>, one row per week per combination that actually exists in the data (don't manufacture zero-filled rows for combinations that never occurred). Expect the Casablanca/Modern-Trade/flagship-SKU cells to have the deepest history and the smallest rural/low-volume-SKU cells to need the most scrutiny in the grain check.</div>
+        </div>
+        <aside class="map" aria-hidden="true">
+          <svg viewBox="0 0 100 200"><g data-idx="1"><rect x="1" y="1" width="98" height="27" rx="5"/><text x="50" y="18" text-anchor="middle">Grain</text></g><g data-idx="2"><rect x="1" y="34" width="98" height="27" rx="5"/><text x="50" y="51" text-anchor="middle">Calendar</text></g><g data-idx="3"><rect x="1" y="67" width="98" height="27" rx="5"/><text x="50" y="84" text-anchor="middle">Controls</text></g><g data-idx="4"><rect x="1" y="100" width="98" height="27" rx="5"/><text x="50" y="117" text-anchor="middle">Fit</text></g><g data-idx="5"><rect x="1" y="133" width="98" height="27" rx="5"/><text x="50" y="150" text-anchor="middle">ROI</text></g><g data-idx="6"><rect x="1" y="166" width="98" height="27" rx="5"/><text x="50" y="183" text-anchor="middle">Optimize</text></g></svg>
+          <div class="map-caption">Phase 1 of 6</div>
+        </aside>
+      </div>
+
+      <div class="decision" data-phase="1" id="d-target">
+        <div class="content">
+          <h3>Which target variable</h3>
+          <div class="qid">target_column</div>
+          <div class="ste"><div class="ste-label">Plain brief</div>Fit the model on a physical quantity. Keep money-based and availability metrics as reporting layers, not as the fitting target.</div>
+          <div class="tbl-wrap">
+            <table>
+              <tr><th>Variable</th><th>What it is</th><th>Use as target?</th></tr>
+              <tr><td class="mono">unit_cases</td><td>Standard trade unit — physical volume moved</td><td><b>Yes</b> — primary recommendation</td></tr>
+              <tr><td class="mono">volume_hl</td><td>Hectoliters — physical volume in beverage-industry units</td><td>Yes — equivalent choice to cases, pick one and stay consistent</td></tr>
+              <tr><td class="mono">revenue</td><td>cases &times; realized price per case</td><td>No — derive after fitting, don't fit on it directly</td></tr>
+              <tr><td class="mono">weighted_distribution</td><td>% of category volume sold through stores stocking the SKU (ACV-style)</td><td>No — this is a control/diagnostic, not something a promo directly saturates</td></tr>
+              <tr><td class="mono">avg_selling_price</td><td>Realized price per case, net of the promo discount</td><td>No — this is usually a control or a separate price-elasticity model</td></tr>
+            </table>
+          </div>
+          <div class="why"><b>Why:</b> a saturation curve is meant to describe diminishing physical response to promo activity. Revenue folds in price movement, which has its own dynamics unrelated to the promo mechanic and can distort the fitted curve's shape. Distribution and price are real, useful variables — they belong as <b>controls</b> in Phase 3, not as the thing being predicted.</div>
+          <div class="eccbc"><div class="eccbc-label">ECCBC example</div>Fit on weekly <code>unit_cases</code> per territory/channel/medaille/SKU cell. Compute revenue afterward as <code>unit_cases &times; avg_selling_price</code> for reporting, and bring <code>weighted_distribution</code> in as a control if it varies meaningfully across ECCBC's SKUs.</div>
+        </div>
+        <aside class="map" aria-hidden="true">
+          <svg viewBox="0 0 100 200"><g data-idx="1"><rect x="1" y="1" width="98" height="27" rx="5"/><text x="50" y="18" text-anchor="middle">Grain</text></g><g data-idx="2"><rect x="1" y="34" width="98" height="27" rx="5"/><text x="50" y="51" text-anchor="middle">Calendar</text></g><g data-idx="3"><rect x="1" y="67" width="98" height="27" rx="5"/><text x="50" y="84" text-anchor="middle">Controls</text></g><g data-idx="4"><rect x="1" y="100" width="98" height="27" rx="5"/><text x="50" y="117" text-anchor="middle">Fit</text></g><g data-idx="5"><rect x="1" y="133" width="98" height="27" rx="5"/><text x="50" y="150" text-anchor="middle">ROI</text></g><g data-idx="6"><rect x="1" y="166" width="98" height="27" rx="5"/><text x="50" y="183" text-anchor="middle">Optimize</text></g></svg>
+          <div class="map-caption">Phase 1 of 6</div>
+        </aside>
+      </div>
+
+      <div class="decision" data-phase="1" id="d-grain-check">
+        <div class="content">
+          <h3>How to check the grain you picked</h3>
+          <div class="qid">param_stability()</div>
+          <div class="ste"><div class="ste-label">Plain brief</div>Fit at the full grain. Check each cell's parameter spread across cross-validation folds before you trust it.</div>
+          <div class="why"><b>Why:</b> a cell with too few promo-active weeks can't identify its own curve — its posterior falls back toward the population prior and can look deceptively stable. A wide, unstable interval across folds is the actual tell that a territory/channel/medaille/SKU cell is too thin to report on its own yet.</div>
+          <div class="eccbc"><div class="eccbc-label">ECCBC example</div>If a low-volume rural SKU in Traditional Trade shows a much wider posterior interval than a flagship SKU in Casablanca Modern Trade for the same mechanic, don't drop SKU from <code>dims</code> globally — flag that specific cell as low-confidence and report it pooled up one level (e.g. territory &times; channel &times; medaille) until more history accumulates.</div>
+        </div>
+        <aside class="map" aria-hidden="true">
+          <svg viewBox="0 0 100 200"><g data-idx="1"><rect x="1" y="1" width="98" height="27" rx="5"/><text x="50" y="18" text-anchor="middle">Grain</text></g><g data-idx="2"><rect x="1" y="34" width="98" height="27" rx="5"/><text x="50" y="51" text-anchor="middle">Calendar</text></g><g data-idx="3"><rect x="1" y="67" width="98" height="27" rx="5"/><text x="50" y="84" text-anchor="middle">Controls</text></g><g data-idx="4"><rect x="1" y="100" width="98" height="27" rx="5"/><text x="50" y="117" text-anchor="middle">Fit</text></g><g data-idx="5"><rect x="1" y="133" width="98" height="27" rx="5"/><text x="50" y="150" text-anchor="middle">ROI</text></g><g data-idx="6"><rect x="1" y="166" width="98" height="27" rx="5"/><text x="50" y="183" text-anchor="middle">Optimize</text></g></svg>
+          <div class="map-caption">Phase 1 of 6</div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- PHASE 2 -->
+    <section class="phase" id="phase-2">
+      <div class="phase-eyebrow">Phase 2 · Calendar &amp; Adstock</div>
+      <h2>Getting the calendar and carryover right</h2>
+
+      <div class="decision" data-phase="2" id="d-calendar">
+        <div class="content">
+          <h3>What goes on the calendar table</h3>
+          <div class="qid">add_events(df_events=...)</div>
+          <div class="ste"><div class="ste-label">Plain brief</div>List fixed holidays with their dates. List Ramadan and Eid with their real Gregorian dates for each year, not one repeating rule.</div>
+          <div class="why"><b>Why:</b> fixed civic holidays repeat on the same Gregorian date every year, so a smooth annual Fourier term already half-covers them. Ramadan and Eid al-Fitr/al-Adha sit on the Hijri calendar and drift roughly 10 to 12 days earlier every Gregorian year — no fixed-period term can track that, so their real dates must be supplied directly.</div>
+          <div class="eccbc"><div class="eccbc-label">ECCBC example</div>Build a lookup of Ramadan start/end and Eid al-Fitr/al-Adha dates for every year in ECCBC's history plus the next planning year, sourced from a Hijri calendar converter, and feed those into <code>add_events()</code>.</div>
+        </div>
+        <aside class="map" aria-hidden="true">
+          <svg viewBox="0 0 100 200"><g data-idx="1"><rect x="1" y="1" width="98" height="27" rx="5"/><text x="50" y="18" text-anchor="middle">Grain</text></g><g data-idx="2"><rect x="1" y="34" width="98" height="27" rx="5"/><text x="50" y="51" text-anchor="middle">Calendar</text></g><g data-idx="3"><rect x="1" y="67" width="98" height="27" rx="5"/><text x="50" y="84" text-anchor="middle">Controls</text></g><g data-idx="4"><rect x="1" y="100" width="98" height="27" rx="5"/><text x="50" y="117" text-anchor="middle">Fit</text></g><g data-idx="5"><rect x="1" y="133" width="98" height="27" rx="5"/><text x="50" y="150" text-anchor="middle">ROI</text></g><g data-idx="6"><rect x="1" y="166" width="98" height="27" rx="5"/><text x="50" y="183" text-anchor="middle">Optimize</text></g></svg>
+          <div class="map-caption">Phase 2 of 6</div>
+        </aside>
+      </div>
+
+      <div class="decision" data-phase="2" id="d-ramadan-split">
+        <div class="content">
+          <h3>One Ramadan event or three</h3>
+          <div class="qid">EventEffect + GaussianBasis</div>
+          <div class="ste"><div class="ste-label">Plain brief</div>Model the stock-up week, Ramadan itself, and Eid as three separate events. Do not fold them into one wide window.</div>
+          <div class="why"><b>Why:</b> consumption shifts direction three times around this period — a stock-up spike beforehand, altered daytime-versus-iftar demand during, and a celebration spike right after Eid. One wide Gaussian bump averages three different shapes into a blurred one.</div>
+          <div class="eccbc"><div class="eccbc-label">ECCBC example</div>Three events per year: <code>pre_ramadan_stockup</code>, <code>ramadan</code>, <code>eid_al_fitr</code> — each with its own <code>GaussianBasis</code> width, since the stock-up bump is typically narrower than the month-long Ramadan effect.</div>
+        </div>
+        <aside class="map" aria-hidden="true">
+          <svg viewBox="0 0 100 200"><g data-idx="1"><rect x="1" y="1" width="98" height="27" rx="5"/><text x="50" y="18" text-anchor="middle">Grain</text></g><g data-idx="2"><rect x="1" y="34" width="98" height="27" rx="5"/><text x="50" y="51" text-anchor="middle">Calendar</text></g><g data-idx="3"><rect x="1" y="67" width="98" height="27" rx="5"/><text x="50" y="84" text-anchor="middle">Controls</text></g><g data-idx="4"><rect x="1" y="100" width="98" height="27" rx="5"/><text x="50" y="117" text-anchor="middle">Fit</text></g><g data-idx="5"><rect x="1" y="133" width="98" height="27" rx="5"/><text x="50" y="150" text-anchor="middle">ROI</text></g><g data-idx="6"><rect x="1" y="166" width="98" height="27" rx="5"/><text x="50" y="183" text-anchor="middle">Optimize</text></g></svg>
+          <div class="map-caption">Phase 2 of 6</div>
+        </aside>
+      </div>
+
+      <div class="decision" data-phase="2" id="d-adstock-type">
+        <div class="content">
+          <h3>Adstock choice per promo mechanic — worked in detail</h3>
+          <div class="qid">NoAdstock() / GeometricAdstock()</div>
+          <div class="ste"><div class="ste-label">Plain brief</div>Look at how each mechanic works. Give it carryover only if its real effect lasts past the promo week.</div>
+
+          <div class="row-label">Step 1 — classify each of ECCBC's 10 mechanics by how it actually acts on a shopper</div>
+          <div class="tbl-wrap">
+            <table>
+              <tr><th>Mechanic archetype</th><th>How it acts</th><th>Starting adstock</th><th>Reasoning</th></tr>
+              <tr><td>Immediate price-off</td><td>Cheaper this week only</td><td class="mono">NoAdstock()</td><td>Pure purchase-timing shift, no memory component</td></tr>
+              <tr><td>Free goods / BOGO</td><td>Extra volume for the same spend</td><td class="mono">NoAdstock()</td><td>Same as above, plus it directly encourages pantry-loading (see next card)</td></tr>
+              <tr><td>Multi-buy / bundle</td><td>Discount conditional on buying more than one</td><td class="mono">NoAdstock()</td><td>Contemporaneous; the "more than one" condition doesn't create a delayed effect</td></tr>
+              <tr><td>In-store display / end-cap</td><td>Extra shelf visibility while it's up</td><td class="mono">GeometricAdstock, tight prior</td><td>Visibility can nudge a shopper who returns a few days later — a small, real carryover</td></tr>
+              <tr><td>Sampling / trial mechanic</td><td>Free trial meant to build a habit</td><td class="mono">GeometricAdstock, wider prior</td><td>This one is explicitly designed to have an effect after the promo ends — closer to awareness-building than a discount</td></tr>
+              <tr><td>Loyalty points multiplier</td><td>Points banked for later redemption</td><td class="mono">GeometricAdstock, wider prior</td><td>The reward is deliberately delayed, so some carryover is structurally expected</td></tr>
+            </table>
+          </div>
+
+          <div class="row-label">Step 2 — don't just assume the table, check it empirically</div>
+          <div class="why">Fit each mechanic's adstock with a wide, uninformative prior first (not <code>NoAdstock()</code> yet). Read the posterior on <b>alpha</b> afterward:</div>
+          <div class="math">\[ w_t = \alpha^{t}, \qquad \alpha \sim \mathrm{Beta}(1,3) \]</div>
+          <div class="why">If the posterior for <b>alpha</b> collapses close to 0, the data itself is telling you that mechanic has no real carryover — switch it to <code>NoAdstock()</code> for the final spec, since a near-zero <b>alpha</b> and no adstock produce the same curve but the simpler model is easier to explain and faster to sample. If <b>alpha</b> posterior sits meaningfully above 0 with a tight interval, keep the estimated adstock — the classification table is a starting hypothesis, the posterior is the actual answer.</div>
+
+          <div class="row-label">Step 3 — half-life is the number to report to the trade team, not alpha</div>
+          <div class="math">\[ \alpha = 0.5^{1/h} \quad\Longleftrightarrow\quad h = \frac{\ln 0.5}{\ln \alpha} \]</div>
+          <div class="why">Alpha is a Bayesian prior parameter, not a number ECCBC's trade team will find meaningful. Half-life <b>h</b> in weeks ("this mechanic's effect fades to half strength after h weeks") is the same information stated in a way a promo planner can act on directly.</div>
+
+          <div class="eccbc"><div class="eccbc-label">ECCBC example</div>Fit ECCBC's free-goods and immediate-discount mechanics with a wide adstock prior first. If the posterior half-life comes back under roughly 1 week for both, lock them to <code>NoAdstock()</code> in the final spec and put the modeling effort instead into the lagged pantry-loading control (next card) — that is very likely where the real multi-week story is for these mechanic types, not in a positive carryover tail.</div>
+        </div>
+        <aside class="map" aria-hidden="true">
+          <svg viewBox="0 0 100 200"><g data-idx="1"><rect x="1" y="1" width="98" height="27" rx="5"/><text x="50" y="18" text-anchor="middle">Grain</text></g><g data-idx="2"><rect x="1" y="34" width="98" height="27" rx="5"/><text x="50" y="51" text-anchor="middle">Calendar</text></g><g data-idx="3"><rect x="1" y="67" width="98" height="27" rx="5"/><text x="50" y="84" text-anchor="middle">Controls</text></g><g data-idx="4"><rect x="1" y="100" width="98" height="27" rx="5"/><text x="50" y="117" text-anchor="middle">Fit</text></g><g data-idx="5"><rect x="1" y="133" width="98" height="27" rx="5"/><text x="50" y="150" text-anchor="middle">ROI</text></g><g data-idx="6"><rect x="1" y="166" width="98" height="27" rx="5"/><text x="50" y="183" text-anchor="middle">Optimize</text></g></svg>
+          <div class="map-caption">Phase 2 of 6</div>
+        </aside>
+      </div>
+
+      <div class="decision" data-phase="2" id="d-lag-control">
+        <div class="content">
+          <h3>Add a lagged pantry-loading control?</h3>
+          <div class="qid">control_columns</div>
+          <div class="ste"><div class="ste-label">Plain brief</div>Add a control for last week's promo activity. Let its coefficient come out negative if the data supports that.</div>
+          <div class="why"><b>Why:</b> a discount often borrows next week's sales forward — buyers stock up, then don't repurchase. Adstock cannot represent that negative give-back; a plain control can, since control coefficients are not sign-constrained.</div>
+          <div class="row-label">Worked example</div>
+          <table>
+            <tr><th>Week</th><th>Mechanic active?</th><th>Effect on cases</th></tr>
+            <tr><td>Promo week</td><td>Yes</td><td>+18% vs. baseline (gross lift)</td></tr>
+            <tr><td>Week after</td><td>No, but <code>promo_active_lag1</code>=1</td><td>&minus;6% vs. baseline (pantry-loading give-back)</td></tr>
+          </table>
+          <div class="why">Net incremental effect of this mechanic is +12%, not +18% — see the ROI card in Phase 5 for how this gets carried through to the final number.</div>
+          <div class="eccbc"><div class="eccbc-label">ECCBC example</div>Add <code>promo_active_lag1</code> per mechanic as a control. A negative, credible coefficient means real forward-buying — the free-goods and multi-buy mechanics from the previous card are the most likely candidates to show this.</div>
+        </div>
+        <aside class="map" aria-hidden="true">
+          <svg viewBox="0 0 100 200"><g data-idx="1"><rect x="1" y="1" width="98" height="27" rx="5"/><text x="50" y="18" text-anchor="middle">Grain</text></g><g data-idx="2"><rect x="1" y="34" width="98" height="27" rx="5"/><text x="50" y="51" text-anchor="middle">Calendar</text></g><g data-idx="3"><rect x="1" y="67" width="98" height="27" rx="5"/><text x="50" y="84" text-anchor="middle">Controls</text></g><g data-idx="4"><rect x="1" y="100" width="98" height="27" rx="5"/><text x="50" y="117" text-anchor="middle">Fit</text></g><g data-idx="5"><rect x="1" y="133" width="98" height="27" rx="5"/><text x="50" y="150" text-anchor="middle">ROI</text></g><g data-idx="6"><rect x="1" y="166" width="98" height="27" rx="5"/><text x="50" y="183" text-anchor="middle">Optimize</text></g></svg>
+          <div class="map-caption">Phase 2 of 6</div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- PHASE 3 -->
+    <section class="phase" id="phase-3">
+      <div class="phase-eyebrow">Phase 3 · Controls &amp; Saturation</div>
+      <h2>Shaping the response curve</h2>
+
+      <div class="decision" data-phase="3" id="d-controls">
+        <div class="content">
+          <h3>Which controls to add</h3>
+          <div class="qid">control_columns</div>
+          <div class="ste"><div class="ste-label">Plain brief</div>Add temperature, a holiday flag, and a seasonality index as controls. Each covers a different gap the promo curves can't explain on their own.</div>
+          <div class="tbl-wrap">
+            <table>
+              <tr><th>Control</th><th>Type</th><th>What it covers</th></tr>
+              <tr><td class="mono">temperature</td><td>continuous, weekly avg per territory</td><td>Year-to-year weather anomalies a fixed seasonal cycle can't — a hotter-than-usual week lifts demand regardless of any promo</td></tr>
+              <tr><td class="mono">is_holiday</td><td>binary 0/1</td><td>A coarse, simple flag for any non-Ramadan/Eid public holiday week — a cheaper alternative to a full Gaussian-basis event when the effect is a short, sharp one-week bump</td></tr>
+              <tr><td class="mono">seasonality_index</td><td>continuous, precomputed composite</td><td>A category-level consumption index (e.g. national soft-drink off-take trend) that captures market-wide seasonal drift the Fourier term alone may under-fit</td></tr>
+            </table>
+          </div>
+          <div class="why"><b>Why these three specifically:</b> each is a distinct, non-overlapping source of variation. Without them, the model has nowhere to put a hot week, a public holiday, or a category-wide trend — and it will incorrectly credit or blame a promo mechanic for that variation instead.</div>
+          <div class="why"><b>Note on <code>is_holiday</code> vs. Phase 2's calendar events:</b> these are two different tools for two different kinds of holiday. Ramadan and Eid get the full <code>EventEffect</code>/<code>GaussianBasis</code> treatment from Phase 2 because their effect is smooth, multi-week, and moving. A plain civic holiday that's a single sharp week is usually fine as this simpler binary control — don't build a Gaussian-basis event for every minor holiday on the calendar.</div>
+          <div class="eccbc"><div class="eccbc-label">ECCBC example</div><code>temperature</code> per territory, <code>is_holiday</code> for Morocco's fixed civic holidays (New Year, Throne Day, Independence Day, etc.), and a <code>seasonality_index</code> built from ECCBC's own category-level volume trend if available, or a national beverage-consumption proxy if not.</div>
+        </div>
+        <aside class="map" aria-hidden="true">
+          <svg viewBox="0 0 100 200"><g data-idx="1"><rect x="1" y="1" width="98" height="27" rx="5"/><text x="50" y="18" text-anchor="middle">Grain</text></g><g data-idx="2"><rect x="1" y="34" width="98" height="27" rx="5"/><text x="50" y="51" text-anchor="middle">Calendar</text></g><g data-idx="3"><rect x="1" y="67" width="98" height="27" rx="5"/><text x="50" y="84" text-anchor="middle">Controls</text></g><g data-idx="4"><rect x="1" y="100" width="98" height="27" rx="5"/><text x="50" y="117" text-anchor="middle">Fit</text></g><g data-idx="5"><rect x="1" y="133" width="98" height="27" rx="5"/><text x="50" y="150" text-anchor="middle">ROI</text></g><g data-idx="6"><rect x="1" y="166" width="98" height="27" rx="5"/><text x="50" y="183" text-anchor="middle">Optimize</text></g></svg>
+          <div class="map-caption">Phase 3 of 6</div>
+        </aside>
+      </div>
+
+      <div class="decision" data-phase="3" id="d-fourier-k">
+        <div class="content">
+          <h3>How many Fourier terms for seasonality</h3>
+          <div class="qid">yearly_seasonality=K</div>
+          <div class="ste"><div class="ste-label">Plain brief</div>Start with a small number of Fourier terms. Add more only if the residual shows a seasonal pattern the model missed.</div>
+          <div class="math">\[ s(t) = \sum_{k=1}^{K} \Big[ a_k \sin(2\pi k t/P) + b_k \cos(2\pi k t/P) \Big] \]</div>
+          <div class="why"><b>Why:</b> a low <b>K</b> gives a smooth, single-peak-per-year curve; a high <b>K</b> can fit sharp bumps — including ones that actually belong to Ramadan or a holiday, which is exactly the aliasing the calendar table and <code>is_holiday</code> control are meant to prevent.</div>
+          <div class="eccbc"><div class="eccbc-label">ECCBC example</div>Start at <code>K=2</code> for the temperature-driven summer/winter cycle; check residuals before raising it, since Ramadan's bump is already handled by its own event, not by Fourier.</div>
+        </div>
+        <aside class="map" aria-hidden="true">
+          <svg viewBox="0 0 100 200"><g data-idx="1"><rect x="1" y="1" width="98" height="27" rx="5"/><text x="50" y="18" text-anchor="middle">Grain</text></g><g data-idx="2"><rect x="1" y="34" width="98" height="27" rx="5"/><text x="50" y="51" text-anchor="middle">Calendar</text></g><g data-idx="3"><rect x="1" y="67" width="98" height="27" rx="5"/><text x="50" y="84" text-anchor="middle">Controls</text></g><g data-idx="4"><rect x="1" y="100" width="98" height="27" rx="5"/><text x="50" y="117" text-anchor="middle">Fit</text></g><g data-idx="5"><rect x="1" y="133" width="98" height="27" rx="5"/><text x="50" y="150" text-anchor="middle">ROI</text></g><g data-idx="6"><rect x="1" y="166" width="98" height="27" rx="5"/><text x="50" y="183" text-anchor="middle">Optimize</text></g></svg>
+          <div class="map-caption">Phase 3 of 6</div>
+        </aside>
+      </div>
+
+      <div class="decision" data-phase="3" id="d-saturation">
+        <div class="content">
+          <h3>Saturation family per mechanic</h3>
+          <div class="qid">HillSaturation() / LogisticSaturation()</div>
+          <div class="math">\[ f(x) = \frac{x^{s}}{k^{s}+x^{s}} \quad \text{(Hill)} \]</div>
+          <div class="row-label">Options</div>
+          <div class="options"><span class="opt">HillSaturation</span><span class="opt">LogisticSaturation</span><span class="opt">MichaelisMentenSaturation</span></div>
+          <div class="why"><b>Why:</b> Hill's extra shape parameter <b>s</b> lets the curve start flat before rising, which fits a discount that needs a minimum depth before shoppers react — logistic saturation always rises fastest at zero spend, which is often the wrong starting shape for a threshold-driven mechanic.</div>
+          <div class="eccbc"><div class="eccbc-label">ECCBC example</div>A free-goods mechanic ("buy 10 get 1") plausibly has a real threshold — Hill's flat start models that; a simple price-off discount without a threshold may fit fine with logistic saturation instead.</div>
+        </div>
+        <aside class="map" aria-hidden="true">
+          <svg viewBox="0 0 100 200"><g data-idx="1"><rect x="1" y="1" width="98" height="27" rx="5"/><text x="50" y="18" text-anchor="middle">Grain</text></g><g data-idx="2"><rect x="1" y="34" width="98" height="27" rx="5"/><text x="50" y="51" text-anchor="middle">Calendar</text></g><g data-idx="3"><rect x="1" y="67" width="98" height="27" rx="5"/><text x="50" y="84" text-anchor="middle">Controls</text></g><g data-idx="4"><rect x="1" y="100" width="98" height="27" rx="5"/><text x="50" y="117" text-anchor="middle">Fit</text></g><g data-idx="5"><rect x="1" y="133" width="98" height="27" rx="5"/><text x="50" y="150" text-anchor="middle">ROI</text></g><g data-idx="6"><rect x="1" y="166" width="98" height="27" rx="5"/><text x="50" y="183" text-anchor="middle">Optimize</text></g></svg>
+          <div class="map-caption">Phase 3 of 6</div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- PHASE 4 -->
+    <section class="phase" id="phase-4">
+      <div class="phase-eyebrow">Phase 4 · Fit &amp; Select</div>
+      <h2>Letting the data pick the functional form</h2>
+
+      <div class="decision" data-phase="4" id="d-link">
+        <div class="content">
+          <h3>Link function, worked concretely</h3>
+          <div class="qid">link="identity" / "log"</div>
+          <div class="ste"><div class="ste-label">Plain brief</div>Use the identity link when a promo adds a fixed number of cases everywhere. Use the log link when it adds a fixed percentage instead.</div>
+          <div class="math">\[ \text{identity: } y = \mu + \varepsilon \qquad\qquad \text{log: } y = e^{\mu}\cdot(1+\varepsilon) \]</div>
+          <div class="row-label">The concrete difference this makes</div>
+          <div class="tbl-wrap">
+            <table>
+              <tr><th>Cell</th><th>Baseline cases</th><th>Identity-link prediction</th><th>Log-link prediction</th></tr>
+              <tr><td>Casablanca / Modern Trade (high-volume)</td><td>10,000</td><td>+500 cases (fixed add)</td><td>+5% &rarr; +500 cases</td></tr>
+              <tr><td>Rabat / Traditional Trade (low-volume)</td><td>800</td><td>+500 cases (same fixed add — implausible here)</td><td>+5% &rarr; +40 cases (scales with the cell)</td></tr>
+            </table>
+          </div>
+          <div class="why"><b>Why this matters:</b> the identity link forces the same absolute promo effect onto every cell regardless of size, which is usually wrong once your grain spans a 10x-plus volume range. The log link instead assumes the same <i>percentage</i> effect everywhere, which is the more realistic assumption when territory/channel/medaille/SKU cells differ hugely in scale — exactly ECCBC's situation with a full four-dim grain.</div>
+          <div class="why"><b>Decision rule:</b> if the ratio between your largest and smallest modeled cell's baseline volume is small (roughly under 3-4x), identity is simpler and fine. If it's large — which a territory&times;channel&times;medaille&times;SKU grain almost always produces — start with log link as the leading candidate, and let cross-validation (next card) confirm it.</div>
+          <div class="eccbc"><div class="eccbc-label">ECCBC example</div>With Casablanca Modern Trade flagship SKUs plausibly 10x+ a rural Traditional Trade cell's volume, put a log-link candidate first in the comparison set in Phase 4's candidate list, not as an afterthought.</div>
+        </div>
+        <aside class="map" aria-hidden="true">
+          <svg viewBox="0 0 100 200"><g data-idx="1"><rect x="1" y="1" width="98" height="27" rx="5"/><text x="50" y="18" text-anchor="middle">Grain</text></g><g data-idx="2"><rect x="1" y="34" width="98" height="27" rx="5"/><text x="50" y="51" text-anchor="middle">Calendar</text></g><g data-idx="3"><rect x="1" y="67" width="98" height="27" rx="5"/><text x="50" y="84" text-anchor="middle">Controls</text></g><g data-idx="4"><rect x="1" y="100" width="98" height="27" rx="5"/><text x="50" y="117" text-anchor="middle">Fit</text></g><g data-idx="5"><rect x="1" y="133" width="98" height="27" rx="5"/><text x="50" y="150" text-anchor="middle">ROI</text></g><g data-idx="6"><rect x="1" y="166" width="98" height="27" rx="5"/><text x="50" y="183" text-anchor="middle">Optimize</text></g></svg>
+          <div class="map-caption">Phase 4 of 6</div>
+        </aside>
+      </div>
+
+      <div class="decision" data-phase="4" id="d-candidates">
+        <div class="content">
+          <h3>How many candidate specs to fit</h3>
+          <div class="ste"><div class="ste-label">Plain brief</div>Fit two or three candidate specs. Do not fit every combination of every choice at once.</div>
+          <div class="why"><b>Why:</b> the combinatorics of link &times; saturation &times; adstock explode fast; a focused set (e.g., log+Hill, log+Logistic, identity+Hill) covers the real open questions without burning a sampling budget on combinations nobody suspects.</div>
+          <div class="eccbc"><div class="eccbc-label">ECCBC example</div>Three candidates for the first ECCBC pass: log-link/Hill, log-link/Logistic, identity-link/Hill — enough to test both open questions (link, curve shape) without a combinatorial sweep.</div>
+        </div>
+        <aside class="map" aria-hidden="true">
+          <svg viewBox="0 0 100 200"><g data-idx="1"><rect x="1" y="1" width="98" height="27" rx="5"/><text x="50" y="18" text-anchor="middle">Grain</text></g><g data-idx="2"><rect x="1" y="34" width="98" height="27" rx="5"/><text x="50" y="51" text-anchor="middle">Calendar</text></g><g data-idx="3"><rect x="1" y="67" width="98" height="27" rx="5"/><text x="50" y="84" text-anchor="middle">Controls</text></g><g data-idx="4"><rect x="1" y="100" width="98" height="27" rx="5"/><text x="50" y="117" text-anchor="middle">Fit</text></g><g data-idx="5"><rect x="1" y="133" width="98" height="27" rx="5"/><text x="50" y="150" text-anchor="middle">ROI</text></g><g data-idx="6"><rect x="1" y="166" width="98" height="27" rx="5"/><text x="50" y="183" text-anchor="middle">Optimize</text></g></svg>
+          <div class="map-caption">Phase 4 of 6</div>
+        </aside>
+      </div>
+
+      <div class="decision" data-phase="4" id="d-cv">
+        <div class="content">
+          <h3>Cross-validation scheme</h3>
+          <div class="qid">summary/cv.py, CRPS</div>
+          <div class="ste"><div class="ste-label">Plain brief</div>Score each candidate on held-out future weeks. Pick the spec with the best out-of-fold score, not the best in-sample fit.</div>
+          <div class="why"><b>Why:</b> in-sample fit always favors the most flexible spec; a time-sliced, out-of-fold score is what actually tells you which functional form generalizes to next quarter's data — the real use case for a TPO platform.</div>
+          <div class="eccbc"><div class="eccbc-label">ECCBC example</div>Hold out the most recent 8-12 weeks of ECCBC data per fold — long enough to span at least one promo cycle per mechanic, so the held-out score reflects real promo-response accuracy, not just trend extrapolation.</div>
+        </div>
+        <aside class="map" aria-hidden="true">
+          <svg viewBox="0 0 100 200"><g data-idx="1"><rect x="1" y="1" width="98" height="27" rx="5"/><text x="50" y="18" text-anchor="middle">Grain</text></g><g data-idx="2"><rect x="1" y="34" width="98" height="27" rx="5"/><text x="50" y="51" text-anchor="middle">Calendar</text></g><g data-idx="3"><rect x="1" y="67" width="98" height="27" rx="5"/><text x="50" y="84" text-anchor="middle">Controls</text></g><g data-idx="4"><rect x="1" y="100" width="98" height="27" rx="5"/><text x="50" y="117" text-anchor="middle">Fit</text></g><g data-idx="5"><rect x="1" y="133" width="98" height="27" rx="5"/><text x="50" y="150" text-anchor="middle">ROI</text></g><g data-idx="6"><rect x="1" y="166" width="98" height="27" rx="5"/><text x="50" y="183" text-anchor="middle">Optimize</text></g></svg>
+          <div class="map-caption">Phase 4 of 6</div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- PHASE 5 -->
+    <section class="phase" id="phase-5">
+      <div class="phase-eyebrow">Phase 5 · Calibrate &amp; ROI</div>
+      <h2>Turning a fitted curve into a trusted number</h2>
+
+      <div class="decision" data-phase="5" id="d-lift">
+        <div class="content">
+          <h3>Use lift-test calibration?</h3>
+          <div class="qid">lift_test.py</div>
+          <div class="math">\[ \text{Potential} = \log\,\mathrm{Gamma}\big(\Delta_{\text{observed}} \mid \Delta_{\text{model}}(x)\big) \]</div>
+          <div class="ste"><div class="ste-label">Plain brief</div>If ECCBC ran a controlled promo test, feed its result into the calibration step. If not, skip this decision for now.</div>
+          <div class="why"><b>Why:</b> observational promo data alone can confound a mechanic's effect with whatever else was happening that week; a real controlled test anchors the saturation curve to ground truth the model can't get from history alone.</div>
+          <div class="eccbc"><div class="eccbc-label">ECCBC example</div>If ECCBC has run even one geo-holdout or matched-market test for a mechanic, calibrate that mechanic's curve against it before trusting its ROI number for optimization.</div>
+        </div>
+        <aside class="map" aria-hidden="true">
+          <svg viewBox="0 0 100 200"><g data-idx="1"><rect x="1" y="1" width="98" height="27" rx="5"/><text x="50" y="18" text-anchor="middle">Grain</text></g><g data-idx="2"><rect x="1" y="34" width="98" height="27" rx="5"/><text x="50" y="51" text-anchor="middle">Calendar</text></g><g data-idx="3"><rect x="1" y="67" width="98" height="27" rx="5"/><text x="50" y="84" text-anchor="middle">Controls</text></g><g data-idx="4"><rect x="1" y="100" width="98" height="27" rx="5"/><text x="50" y="117" text-anchor="middle">Fit</text></g><g data-idx="5"><rect x="1" y="133" width="98" height="27" rx="5"/><text x="50" y="150" text-anchor="middle">ROI</text></g><g data-idx="6"><rect x="1" y="166" width="98" height="27" rx="5"/><text x="50" y="183" text-anchor="middle">Optimize</text></g></svg>
+          <div class="map-caption">Phase 5 of 6</div>
+        </aside>
+      </div>
+
+      <div class="decision" data-phase="5" id="d-reducer">
+        <div class="content">
+          <h3>Which incrementality reducer</h3>
+          <div class="qid">IncrementalReducer subclasses</div>
+          <div class="why"><b>Why:</b> the correct way to compute "incremental cases from this mechanic" depends on the link function chosen in Phase 4 — an identity-link model's increment is a simple subtraction; a log-link model's increment requires working back through the exponential, which is why the reducer is a link-specific class, not one formula.</div>
+          <div class="eccbc"><div class="eccbc-label">ECCBC example</div>Whichever link won the Phase 4 cross-validation, use its matching reducer — mixing an identity-link reducer with a log-link fit will silently misstate every mechanic's ROI.</div>
+        </div>
+        <aside class="map" aria-hidden="true">
+          <svg viewBox="0 0 100 200"><g data-idx="1"><rect x="1" y="1" width="98" height="27" rx="5"/><text x="50" y="18" text-anchor="middle">Grain</text></g><g data-idx="2"><rect x="1" y="34" width="98" height="27" rx="5"/><text x="50" y="51" text-anchor="middle">Calendar</text></g><g data-idx="3"><rect x="1" y="67" width="98" height="27" rx="5"/><text x="50" y="84" text-anchor="middle">Controls</text></g><g data-idx="4"><rect x="1" y="100" width="98" height="27" rx="5"/><text x="50" y="117" text-anchor="middle">Fit</text></g><g data-idx="5"><rect x="1" y="133" width="98" height="27" rx="5"/><text x="50" y="150" text-anchor="middle">ROI</text></g><g data-idx="6"><rect x="1" y="166" width="98" height="27" rx="5"/><text x="50" y="183" text-anchor="middle">Optimize</text></g></svg>
+          <div class="map-caption">Phase 5 of 6</div>
+        </aside>
+      </div>
+
+      <div class="decision" data-phase="5" id="d-net-roi">
+        <div class="content">
+          <h3>Gross ROI or net ROI</h3>
+          <div class="ste"><div class="ste-label">Plain brief</div>Subtract the lagged control's pull-back from the promo week's lift. Report that net number as ROI, not the raw gross lift.</div>
+          <div class="why"><b>Why:</b> reporting gross lift alone overstates a mechanic that borrows heavily from the following week — two mechanics with identical gross lift can have very different true incrementality once forward-buying is netted out.</div>
+          <div class="eccbc"><div class="eccbc-label">ECCBC example</div>Continuing Phase 2's worked example: +18% gross lift minus 6% pantry-loading give-back means net ROI is computed off +12%, not +18%.</div>
+        </div>
+        <aside class="map" aria-hidden="true">
+          <svg viewBox="0 0 100 200"><g data-idx="1"><rect x="1" y="1" width="98" height="27" rx="5"/><text x="50" y="18" text-anchor="middle">Grain</text></g><g data-idx="2"><rect x="1" y="34" width="98" height="27" rx="5"/><text x="50" y="51" text-anchor="middle">Calendar</text></g><g data-idx="3"><rect x="1" y="67" width="98" height="27" rx="5"/><text x="50" y="84" text-anchor="middle">Controls</text></g><g data-idx="4"><rect x="1" y="100" width="98" height="27" rx="5"/><text x="50" y="117" text-anchor="middle">Fit</text></g><g data-idx="5"><rect x="1" y="133" width="98" height="27" rx="5"/><text x="50" y="150" text-anchor="middle">ROI</text></g><g data-idx="6"><rect x="1" y="166" width="98" height="27" rx="5"/><text x="50" y="183" text-anchor="middle">Optimize</text></g></svg>
+          <div class="map-caption">Phase 5 of 6</div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- PHASE 6 -->
+    <section class="phase" id="phase-6">
+      <div class="phase-eyebrow">Phase 6 · Optimize &amp; Validate</div>
+      <h2>Turning ROI into a plan</h2>
+
+      <div class="decision" data-phase="6" id="d-bounds">
+        <div class="content">
+          <h3>Budget scenario bounds</h3>
+          <div class="qid">budget_bounds</div>
+          <div class="row-label">Options</div>
+          <div class="options"><span class="opt">fixed — bounds pinned to current spend</span><span class="opt">reduced — upper bound below current</span><span class="opt">increased — upper bound above current</span></div>
+          <div class="why"><b>Why:</b> the same optimizer call answers all three business questions — only the bound per cell changes, so the scenario is a configuration choice, not a different model or a different code path.</div>
+          <div class="eccbc"><div class="eccbc-label">ECCBC example</div>A "reduce Casablanca Hypermarket 10%" ask becomes an upper bound of 0.9&times; that cell's current spend, passed straight into <code>budget_bounds</code> for that cell.</div>
+        </div>
+        <aside class="map" aria-hidden="true">
+          <svg viewBox="0 0 100 200"><g data-idx="1"><rect x="1" y="1" width="98" height="27" rx="5"/><text x="50" y="18" text-anchor="middle">Grain</text></g><g data-idx="2"><rect x="1" y="34" width="98" height="27" rx="5"/><text x="50" y="51" text-anchor="middle">Calendar</text></g><g data-idx="3"><rect x="1" y="67" width="98" height="27" rx="5"/><text x="50" y="84" text-anchor="middle">Controls</text></g><g data-idx="4"><rect x="1" y="100" width="98" height="27" rx="5"/><text x="50" y="117" text-anchor="middle">Fit</text></g><g data-idx="5"><rect x="1" y="133" width="98" height="27" rx="5"/><text x="50" y="150" text-anchor="middle">ROI</text></g><g data-idx="6"><rect x="1" y="166" width="98" height="27" rx="5"/><text x="50" y="183" text-anchor="middle">Optimize</text></g></svg>
+          <div class="map-caption">Phase 6 of 6</div>
+        </aside>
+      </div>
+
+      <div class="decision" data-phase="6" id="d-periods">
+        <div class="content">
+          <h3>How far ahead to plan</h3>
+          <div class="qid">num_periods</div>
+          <div class="ste"><div class="ste-label">Plain brief</div>Set the planning horizon to match the real decision window. Do not default to a full year if the ask is one quarter.</div>
+          <div class="why"><b>Why:</b> the optimizer solves jointly over budget and calendar within <code>num_periods</code> — a longer horizon than the actual decision window adds solve time and lets the optimizer plan around information the business won't act on anyway.</div>
+          <div class="eccbc"><div class="eccbc-label">ECCBC example</div>For a next-quarter trade plan around Ramadan timing, set <code>num_periods</code> to the 13 weeks of that quarter, not 52.</div>
+        </div>
+        <aside class="map" aria-hidden="true">
+          <svg viewBox="0 0 100 200"><g data-idx="1"><rect x="1" y="1" width="98" height="27" rx="5"/><text x="50" y="18" text-anchor="middle">Grain</text></g><g data-idx="2"><rect x="1" y="34" width="98" height="27" rx="5"/><text x="50" y="51" text-anchor="middle">Calendar</text></g><g data-idx="3"><rect x="1" y="67" width="98" height="27" rx="5"/><text x="50" y="84" text-anchor="middle">Controls</text></g><g data-idx="4"><rect x="1" y="100" width="98" height="27" rx="5"/><text x="50" y="117" text-anchor="middle">Fit</text></g><g data-idx="5"><rect x="1" y="133" width="98" height="27" rx="5"/><text x="50" y="150" text-anchor="middle">ROI</text></g><g data-idx="6"><rect x="1" y="166" width="98" height="27" rx="5"/><text x="50" y="183" text-anchor="middle">Optimize</text></g></svg>
+          <div class="map-caption">Phase 6 of 6</div>
+        </aside>
+      </div>
+
+      <div class="decision" data-phase="6" id="d-sanity">
+        <div class="content">
+          <h3>Final sanity check</h3>
+          <div class="ste"><div class="ste-label">Plain brief</div>Compare the model's ROI ranking against the trade team's own view. Investigate any large disagreement before you trust the plan.</div>
+          <div class="why"><b>Why:</b> a platform recommendation that contradicts the trade team's lived experience without an identifiable reason is more likely a data or specification issue than a genuine insight — this check is what earns the platform trust before it goes into production.</div>
+          <div class="eccbc"><div class="eccbc-label">ECCBC example</div>If the model ranks a little-used mechanic as ECCBC's best performer, check whether that mechanic simply ran in too few, too-easy weeks (Phase 1's grain check) before presenting it as a recommendation.</div>
+        </div>
+        <aside class="map" aria-hidden="true">
+          <svg viewBox="0 0 100 200"><g data-idx="1"><rect x="1" y="1" width="98" height="27" rx="5"/><text x="50" y="18" text-anchor="middle">Grain</text></g><g data-idx="2"><rect x="1" y="34" width="98" height="27" rx="5"/><text x="50" y="51" text-anchor="middle">Calendar</text></g><g data-idx="3"><rect x="1" y="67" width="98" height="27" rx="5"/><text x="50" y="84" text-anchor="middle">Controls</text></g><g data-idx="4"><rect x="1" y="100" width="98" height="27" rx="5"/><text x="50" y="117" text-anchor="middle">Fit</text></g><g data-idx="5"><rect x="1" y="133" width="98" height="27" rx="5"/><text x="50" y="150" text-anchor="middle">ROI</text></g><g data-idx="6"><rect x="1" y="166" width="98" height="27" rx="5"/><text x="50" y="183" text-anchor="middle">Optimize</text></g></svg>
+          <div class="map-caption">Phase 6 of 6</div>
+        </aside>
+      </div>
+    </section>
+
+    <footer class="end">
+      Companion to the ECCBC TPO Decision Roadmap flowchart. Every option and equation above traces back to a real pymc-marketing class or module discussed and verified against source during this build. Mechanic archetypes in Phase 2 (price-off, free goods, multi-buy, display, sampling, loyalty) are generic trade-promotion categories, not ECCBC's actual named mechanics — substitute ECCBC's real 10 mechanics into that classification once named.
+    </footer>
+  </main>
+</div>
+
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [['\\(','\\)']], displayMath: [['\\[','\\]']] },
+    svg: { fontCache: 'global' }
+  };
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-svg.js"></script>
+<script>
+  (function(){
+    var links = Array.prototype.slice.call(document.querySelectorAll('.toc-list a'));
+    var sections = links.map(function(a){ return document.querySelector(a.getAttribute('href')); }).filter(Boolean);
+    function onScroll(){
+      var pos = window.scrollY + 140;
+      var current = sections[0];
+      sections.forEach(function(s){ if (s.offsetTop <= pos) current = s; });
+      links.forEach(function(a){
+        var target = document.querySelector(a.getAttribute('href'));
+        a.classList.toggle('active', target === current);
+      });
+    }
+    document.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+  })();
+</script>
