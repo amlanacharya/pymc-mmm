@@ -161,3 +161,8 @@ sandbox/
 
 .cursor/plans
 automatic_translation.py
+
+# Local agent config, kept on disk but not tracked
+.claude/
+.cursor/
+.github/
