@@ -1,0 +1,398 @@
+<title>Posterior Notes</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+  :root{
+    --bg:#eef1ef; --surface:#ffffff; --ink:#1b2420; --ink-soft:#54615b;
+    --rule:#d6dcd5; --teal:#1f7a6c; --teal-soft:#e2f0ec; --teal-line:#bcdbd2;
+    --amber:#a8721c; --amber-soft:#f7ecd8; --amber-line:#e6cd9c;
+    --code-bg:#f1efe5; --shadow:0 1px 2px rgba(20,30,25,.06),0 8px 24px rgba(20,30,25,.05);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#12171a; --surface:#181f23; --ink:#e7ece9; --ink-soft:#9dab a4;
+      --ink-soft:#9caba4; --rule:#2a3339; --teal:#54c9b0; --teal-soft:#173028; --teal-line:#245047;
+      --amber:#e3ac54; --amber-soft:#2c2313; --amber-line:#4d3c1e;
+      --code-bg:#1d2429; --shadow:0 1px 2px rgba(0,0,0,.3),0 12px 28px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#12171a; --surface:#181f23; --ink:#e7ece9; --ink-soft:#9caba4; --rule:#2a3339;
+    --teal:#54c9b0; --teal-soft:#173028; --teal-line:#245047;
+    --amber:#e3ac54; --amber-soft:#2c2313; --amber-line:#4d3c1e;
+    --code-bg:#1d2429; --shadow:0 1px 2px rgba(0,0,0,.3),0 12px 28px rgba(0,0,0,.35);
+  }
+
+  *{box-sizing:border-box;}
+  body{background:var(--bg); color:var(--ink); font-family:'IBM Plex Sans',-apple-system,sans-serif; line-height:1.55; -webkit-font-smoothing:antialiased;}
+  h1,h2,h3{font-family:'Spectral',Georgia,serif; text-wrap:balance; margin:0;}
+  code, .mono{font-family:'IBM Plex Mono',ui-monospace,monospace;}
+
+  .shell{display:grid; grid-template-columns:248px minmax(0,1fr); min-height:100vh;}
+
+  /* ---- sidebar ---- */
+  nav.toc{position:sticky; top:0; height:100vh; overflow-y:auto; padding:28px 18px 28px 28px; border-right:1px solid var(--rule);}
+  .brand{font-family:'Spectral',serif; font-weight:600; font-size:1.15rem; margin-bottom:2px;}
+  .brand-sub{font-size:.74rem; color:var(--ink-soft); margin-bottom:26px; letter-spacing:.02em;}
+  .legend{display:flex; flex-direction:column; gap:6px; font-size:.72rem; color:var(--ink-soft); margin-bottom:26px; padding:10px 12px; background:var(--surface); border:1px solid var(--rule); border-radius:8px;}
+  .legend span.sw{display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:6px; vertical-align:middle;}
+  .toc-list{list-style:none; margin:0; padding:0; font-size:.86rem;}
+  .toc-list li a{display:block; padding:6px 10px; margin-bottom:1px; border-radius:6px; color:var(--ink-soft); text-decoration:none; border-left:2px solid transparent;}
+  .toc-list li a:hover{color:var(--ink); background:var(--teal-soft);}
+  .toc-list li a.active{color:var(--ink); background:var(--teal-soft); border-left-color:var(--teal); font-weight:500;}
+  .toc-list .grp{font-size:.68rem; text-transform:uppercase; letter-spacing:.08em; color:var(--ink-soft); margin:16px 0 6px 10px; opacity:.75;}
+  .toc-list .grp:first-child{margin-top:0;}
+
+  /* ---- main ---- */
+  main{padding:56px clamp(20px,5vw,72px) 120px; max-width:900px;}
+  header.hero{margin-bottom:56px;}
+  header.hero h1{font-size:2.3rem; font-weight:600;}
+  header.hero .dek{font-size:1.02rem; color:var(--ink-soft); max-width:60ch; margin-top:12px;}
+
+  section.chapter{padding-top:70px; margin-top:-10px; border-top:1px solid var(--rule); margin-bottom:6px;}
+  section.chapter:first-of-type{border-top:none;}
+  .chapter-eyebrow{font-size:.74rem; letter-spacing:.09em; text-transform:uppercase; color:var(--teal); font-weight:500; margin-bottom:8px;}
+  .chapter h2{font-size:1.65rem; margin-bottom:10px;}
+  .chapter .intro{color:var(--ink-soft); max-width:66ch; margin-bottom:30px; font-size:.98rem;}
+
+  /* ---- flow diagram ---- */
+  .flow-wrap{background:var(--surface); border:1px solid var(--rule); border-radius:12px; padding:22px 20px 18px; margin-bottom:34px; box-shadow:var(--shadow); overflow-x:auto;}
+  .flow-wrap svg{display:block; min-width:520px;}
+  .flow-cap{font-size:.76rem; color:var(--ink-soft); margin-top:10px; padding-top:10px; border-top:1px dashed var(--rule);}
+
+  /* ---- equation cards ---- */
+  .eqcard{background:var(--surface); border:1px solid var(--rule); border-radius:12px; padding:20px 22px 22px; margin-bottom:20px; box-shadow:var(--shadow);}
+  .eqcard .eq-title{display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:12px; flex-wrap:wrap;}
+  .eqcard .eq-title h3{font-size:1.05rem; font-weight:600;}
+  .eqcard .cite{font-size:.72rem; color:var(--amber); background:var(--amber-soft); border:1px solid var(--amber-line); padding:2px 8px; border-radius:20px; white-space:nowrap;}
+  .eqcard .math{background:var(--code-bg); border:1px solid var(--rule); border-radius:8px; padding:16px 18px; overflow-x:auto; margin-bottom:14px; font-size:1.02rem;}
+  .eqcard .why{font-size:.92rem; color:var(--ink-soft);}
+  .eqcard .why b{color:var(--ink); font-weight:600;}
+
+  .prior-row{display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;}
+  .prior-chip{font-size:.78rem; padding:4px 10px; background:var(--teal-soft); border:1px solid var(--teal-line); border-radius:20px; color:var(--ink);}
+
+  footer.end{margin-top:60px; padding-top:24px; border-top:1px solid var(--rule); font-size:.78rem; color:var(--ink-soft);}
+
+  ::selection{background:var(--amber-soft);}
+
+  @media (max-width: 760px){
+    .shell{grid-template-columns:1fr;}
+    nav.toc{position:relative; height:auto; border-right:none; border-bottom:1px solid var(--rule);}
+  }
+</style>
+
+<div class="shell">
+  <nav class="toc" id="toc">
+    <div class="brand">Posterior Notes</div>
+    <div class="brand-sub">pymc-marketing, architecture ↔ mathematics</div>
+    <div class="legend">
+      <div><span class="sw" style="background:var(--teal)"></span>flow / architecture</div>
+      <div><span class="sw" style="background:var(--amber)"></span>likelihood / equation</div>
+    </div>
+    <ul class="toc-list">
+      <li class="grp">Foundation</li>
+      <li><a href="#base">Base class + lifecycle</a></li>
+      <li class="grp">Media Mix Model</li>
+      <li><a href="#mmm-flow">Transform pipeline</a></li>
+      <li><a href="#mmm-math">Adstock &amp; saturation</a></li>
+      <li><a href="#mmm-season">Seasonality &amp; HSGP</a></li>
+      <li><a href="#mmm-calib">Calibration &amp; budget</a></li>
+      <li class="grp">Customer Lifetime Value</li>
+      <li><a href="#clv-flow">Model family</a></li>
+      <li><a href="#clv-math">Purchase &amp; spend likelihoods</a></li>
+      <li class="grp">Discrete Choice</li>
+      <li><a href="#choice-flow">Model family</a></li>
+      <li><a href="#choice-math">Utility &amp; share equations</a></li>
+    </ul>
+  </nav>
+
+  <main>
+    <header class="hero">
+      <h1>Posterior Notes</h1>
+      <p class="dek">Every model family in pymc-marketing, read two ways at once: the code path a fit() call actually takes, and the equation that path is computing. Diagrams in <b style="color:var(--teal)">teal</b> show flow; cards in <b style="color:var(--amber)">amber</b> show the math underneath it — each pinned to the file and line it comes from.</p>
+    </header>
+
+    <!-- ===================== BASE / LIFECYCLE ===================== -->
+    <section class="chapter" id="base">
+      <div class="chapter-eyebrow">Foundation</div>
+      <h2>One base class, five model families</h2>
+      <p class="intro">MMM, CLV, Customer Choice, Bass, and PIE all extend <code>ModelBuilder</code> or <code>RegressionModelBuilder</code>. The base class owns nothing mathematical — it owns state: has a model been built, has it been fit, has it been saved. Every subsystem below plugs its own likelihood into the same four-step machine.</p>
+
+      <div class="flow-wrap">
+        <svg viewBox="0 0 860 130" width="100%">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--teal)"/>
+            </marker>
+          </defs>
+          <g font-family="IBM Plex Mono" font-size="12.5" fill="var(--ink)">
+            <g transform="translate(10,35)">
+              <rect width="150" height="55" rx="8" fill="var(--teal-soft)" stroke="var(--teal-line)"/>
+              <text x="75" y="24" text-anchor="middle" font-weight="600">Instantiated</text>
+              <text x="75" y="41" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)">idata = None</text>
+            </g>
+            <line x1="160" y1="62" x2="212" y2="62" stroke="var(--teal)" stroke-width="1.6" marker-end="url(#arrow)"/>
+            <g transform="translate(212,35)">
+              <rect width="150" height="55" rx="8" fill="var(--teal-soft)" stroke="var(--teal-line)"/>
+              <text x="75" y="24" text-anchor="middle" font-weight="600">build_model()</text>
+              <text x="75" y="41" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)">pm.Model graph</text>
+            </g>
+            <line x1="362" y1="62" x2="414" y2="62" stroke="var(--teal)" stroke-width="1.6" marker-end="url(#arrow)"/>
+            <g transform="translate(414,35)">
+              <rect width="150" height="55" rx="8" fill="var(--teal-soft)" stroke="var(--teal-line)"/>
+              <text x="75" y="24" text-anchor="middle" font-weight="600">fit()</text>
+              <text x="75" y="41" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)">pm.sample() → idata</text>
+            </g>
+            <line x1="564" y1="62" x2="616" y2="62" stroke="var(--teal)" stroke-width="1.6" marker-end="url(#arrow)"/>
+            <g transform="translate(616,35)">
+              <rect width="150" height="55" rx="8" fill="var(--teal-soft)" stroke="var(--teal-line)"/>
+              <text x="75" y="24" text-anchor="middle" font-weight="600">save() / load()</text>
+              <text x="75" y="41" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)">netcdf / zarr</text>
+            </g>
+          </g>
+        </svg>
+        <div class="flow-cap"><span class="mono">model_builder.py</span> — <code>load()</code> checks a stored model id/version before rebuilding, raising <code>DifferentModelError</code> on mismatch. <code>mlflow.py:1365-1472</code> autologs RV counts and divergences on every <code>fit()</code>.</div>
+      </div>
+    </section>
+
+    <!-- ===================== MMM FLOW ===================== -->
+    <section class="chapter" id="mmm-flow">
+      <div class="chapter-eyebrow">Media Mix Model</div>
+      <h2>Spend → contribution → posterior</h2>
+      <p class="intro">Each channel's raw spend is scaled, reshaped by adstock (carryover) then saturation (diminishing returns), and summed with a seasonal term into one likelihood. A lift test, when available, doesn't feed the likelihood directly — it calibrates the saturation curve that already sits there.</p>
+      <div class="flow-wrap">
+        <svg viewBox="0 0 900 260" width="100%">
+          <defs>
+            <marker id="arrowT" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--teal)"/></marker>
+            <marker id="arrowA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--amber)"/></marker>
+          </defs>
+          <g font-family="IBM Plex Mono" font-size="12" fill="var(--ink)">
+            <!-- row y=20 raw -->
+            <g transform="translate(10,90)"><rect width="120" height="50" rx="7" fill="var(--teal-soft)" stroke="var(--teal-line)"/><text x="60" y="30" text-anchor="middle" font-weight="600">raw spend</text></g>
+            <line x1="130" y1="115" x2="178" y2="115" stroke="var(--teal)" stroke-width="1.6" marker-end="url(#arrowT)"/>
+            <g transform="translate(178,90)"><rect width="120" height="50" rx="7" fill="var(--teal-soft)" stroke="var(--teal-line)"/><text x="60" y="30" text-anchor="middle" font-weight="600">scaler</text></g>
+            <line x1="298" y1="115" x2="346" y2="115" stroke="var(--teal)" stroke-width="1.6" marker-end="url(#arrowT)"/>
+            <g transform="translate(346,20)"><rect width="130" height="50" rx="7" fill="var(--teal-soft)" stroke="var(--teal-line)"/><text x="65" y="30" text-anchor="middle" font-weight="600">adstock</text></g>
+            <line x1="411" y1="70" x2="411" y2="95" stroke="var(--teal)" stroke-width="1.6" marker-end="url(#arrowT)"/>
+            <g transform="translate(346,95)"><rect width="130" height="50" rx="7" fill="var(--teal-soft)" stroke="var(--teal-line)"/><text x="65" y="30" text-anchor="middle" font-weight="600">saturation</text></g>
+            <g transform="translate(346,170)"><rect width="130" height="50" rx="7" fill="var(--amber-soft)" stroke="var(--amber-line)"/><text x="65" y="24" text-anchor="middle" font-weight="600" fill="var(--amber)">lift test</text><text x="65" y="40" text-anchor="middle" font-size="10" fill="var(--ink-soft)">calibrates ↑</text></g>
+            <line x1="411" y1="170" x2="411" y2="150" stroke="var(--amber)" stroke-width="1.6" marker-end="url(#arrowA)"/>
+            <line x1="476" y1="120" x2="524" y2="120" stroke="var(--teal)" stroke-width="1.6" marker-end="url(#arrowT)"/>
+            <g transform="translate(524,95)"><rect width="140" height="50" rx="7" fill="var(--teal-soft)" stroke="var(--teal-line)"/><text x="70" y="30" text-anchor="middle" font-weight="600">likelihood</text></g>
+            <g transform="translate(524,170)"><rect width="140" height="50" rx="7" fill="var(--teal-soft)" stroke="var(--teal-line)"/><text x="70" y="24" text-anchor="middle" font-weight="600" font-size="11">seasonality</text><text x="70" y="40" text-anchor="middle" font-size="10" fill="var(--ink-soft)">Fourier + HSGP</text></g>
+            <line x1="594" y1="170" x2="594" y2="150" stroke="var(--teal)" stroke-width="1.6" marker-end="url(#arrowT)"/>
+            <line x1="664" y1="120" x2="712" y2="120" stroke="var(--teal)" stroke-width="1.6" marker-end="url(#arrowT)"/>
+            <g transform="translate(712,95)"><rect width="130" height="50" rx="7" fill="var(--teal-soft)" stroke="var(--teal-line)"/><text x="65" y="24" text-anchor="middle" font-weight="600" font-size="11">posterior</text><text x="65" y="40" text-anchor="middle" font-size="10" fill="var(--ink-soft)">pm.sample()</text></g>
+            <line x1="777" y1="145" x2="777" y2="205" stroke="var(--teal)" stroke-width="1.6" marker-end="url(#arrowT)"/>
+            <g transform="translate(650,205)"><rect width="192" height="42" rx="7" fill="var(--teal-soft)" stroke="var(--teal-line)"/><text x="96" y="26" text-anchor="middle" font-weight="600" font-size="11">budget optimizer (SLSQP)</text></g>
+          </g>
+        </svg>
+        <div class="flow-cap">Nodes in amber are where a formula, not just a data reshape, does the work — those get their own card below.</div>
+      </div>
+    </section>
+
+    <section class="chapter" id="mmm-math">
+      <h2>Adstock and saturation</h2>
+      <p class="intro">Two transforms, applied per channel, that turn a spend series into a shape the likelihood can use: one for memory, one for decreasing returns.</p>
+
+      <div class="eqcard">
+        <div class="eq-title"><h3>Geometric adstock — carryover</h3><span class="cite mono">transformers.py:319</span></div>
+        <div class="math">\[ w_t = \alpha^{t}, \qquad x^{*}_{t} = \sum_{l=0}^{L} w_l \, x_{t-l} \]</div>
+        <div class="why">Media effect doesn't stop the day spend stops. Each lag <b>l</b> back gets weight <b>α<sup>l</sup></b>, so a bigger <b>α</b> (closer to 1) means the channel's effect decays slowly — a billboard, not a flash sale.</div>
+      </div>
+
+      <div class="eqcard">
+        <div class="eq-title"><h3>Logistic saturation — diminishing returns</h3><span class="cite mono">transformers.py:582</span></div>
+        <div class="math">\[ f(x) = \frac{1 - e^{-\lambda x}}{1 + e^{-\lambda x}} \]</div>
+        <div class="why">Doubling spend rarely doubles response. <b>λ</b> controls how fast the curve bends over — a large λ saturates a channel at low spend, meaning more budget there buys almost nothing extra.</div>
+      </div>
+    </section>
+
+    <section class="chapter" id="mmm-season">
+      <h2>Seasonality and time-varying effects</h2>
+      <p class="intro">The likelihood's additive term outside the media channels — calendar cycles plus anything drifting slowly over time.</p>
+
+      <div class="eqcard">
+        <div class="eq-title"><h3>Fourier seasonality</h3><span class="cite mono">fourier.py:313</span></div>
+        <div class="math">\[ s(t) = \sum_{k=1}^{K} \Big[ a_k \sin\!\big(2\pi k t / P\big) + b_k \cos\!\big(2\pi k t / P\big) \Big] \]</div>
+        <div class="why">Weekly and yearly cycles as a sum of waves. <b>K</b> terms buys smoother or sharper seasonal shape; the coefficients <b>a<sub>k</sub>, b<sub>k</sub></b> are fit like any other parameter.</div>
+      </div>
+
+      <div class="eqcard">
+        <div class="eq-title"><h3>HSGP — time-varying trend</h3><span class="cite mono">hsgp.py:244</span></div>
+        <div class="math">\[ f(t) \approx \sum_{j=1}^{M} \phi_j(t)\, \sqrt{S(\sqrt{\lambda_j})}\; \beta_j, \qquad \beta_j \sim \mathcal{N}(0,1) \]</div>
+        <div class="why">A full Gaussian Process is expensive to sample. The Hilbert-Space approximation swaps it for a fixed basis <b>φ<sub>j</sub></b> weighted by <b>M</b> ordinary Normal parameters — same smooth-drift behavior, PyMC-cheap to fit.</div>
+      </div>
+    </section>
+
+    <section class="chapter" id="mmm-calib">
+      <h2>Calibration and optimization</h2>
+      <p class="intro">Two places real-world ground truth enters after the curves are defined: an experiment tells the model its saturation curve is right, and an optimizer uses the fitted curves to answer "where should next quarter's budget go."</p>
+
+      <div class="eqcard">
+        <div class="eq-title"><h3>Lift-test calibration</h3><span class="cite mono">lift_test.py:437</span></div>
+        <div class="math">\[ \text{Potential} \;=\; \log \, \mathrm{Gamma}\big(\Delta_{\text{observed}} \,\big|\, \Delta_{\text{model}}(x)\big) \]</div>
+        <div class="why">An incrementality test measures a real lift <b>Δ<sub>observed</sub></b> for a spend change. A Gamma potential adds to the log-posterior whenever the model's own saturation curve predicts a different lift — nudging the curve toward what the experiment actually saw.</div>
+      </div>
+
+      <div class="eqcard">
+        <div class="eq-title"><h3>Budget optimizer</h3><span class="cite mono">budget_optimizer.py:1548</span></div>
+        <div class="math">\[ \max_{b_1,\dots,b_C} \; \mathbb{E}\!\left[\sum_{c=1}^{C} f_c\big(\text{adstock}_c(b_c)\big)\right] \quad \text{s.t.} \quad \sum_c b_c \le B \]</div>
+        <div class="why">With adstock and saturation curves fixed from the posterior, this is now an ordinary constrained optimization — scipy's SLSQP finds the per-channel budgets <b>b<sub>c</sub></b> that maximize total expected response under a total budget <b>B</b>.</div>
+      </div>
+    </section>
+
+    <!-- ===================== CLV ===================== -->
+    <section class="chapter" id="clv-flow">
+      <div class="chapter-eyebrow">Customer Lifetime Value</div>
+      <h2>Same RFM data, three questions</h2>
+      <p class="intro">Every CLV model here reads the same summary per customer — frequency <code>x</code>, recency <code>t_x</code>, observation window <code>T</code> — and answers a different question: will they come back, when will they stop, and how much will they spend.</p>
+      <div class="flow-wrap">
+        <svg viewBox="0 0 820 200" width="100%">
+          <defs><marker id="arrowT2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--teal)"/></marker></defs>
+          <g font-family="IBM Plex Mono" font-size="12" fill="var(--ink)">
+            <g transform="translate(10,75)"><rect width="130" height="50" rx="7" fill="var(--teal-soft)" stroke="var(--teal-line)"/><text x="65" y="24" text-anchor="middle" font-weight="600" font-size="11">RFM summary</text><text x="65" y="40" text-anchor="middle" font-size="10" fill="var(--ink-soft)">x, t_x, T</text></g>
+            <line x1="140" y1="35" x2="188" y2="35" stroke="var(--teal)" stroke-width="1.6" marker-end="url(#arrowT2)" transform="translate(0,10)"/>
+            <line x1="140" y1="100" x2="188" y2="100" stroke="var(--teal)" stroke-width="1.6" marker-end="url(#arrowT2)"/>
+            <line x1="140" y1="165" x2="188" y2="165" stroke="var(--teal)" stroke-width="1.6" marker-end="url(#arrowT2)"/>
+            <g transform="translate(188,20)"><rect width="180" height="50" rx="7" fill="var(--teal-soft)" stroke="var(--teal-line)"/><text x="90" y="30" text-anchor="middle" font-weight="600">BetaGeo/NBD</text></g>
+            <g transform="translate(188,85)"><rect width="180" height="50" rx="7" fill="var(--teal-soft)" stroke="var(--teal-line)"/><text x="90" y="30" text-anchor="middle" font-weight="600">Pareto/NBD</text></g>
+            <g transform="translate(188,150)"><rect width="180" height="50" rx="7" fill="var(--amber-soft)" stroke="var(--amber-line)"/><text x="90" y="30" text-anchor="middle" font-weight="600" fill="var(--amber)">Gamma-Gamma</text></g>
+            <line x1="368" y1="45" x2="416" y2="90" stroke="var(--teal)" stroke-width="1.6" marker-end="url(#arrowT2)"/>
+            <line x1="368" y1="110" x2="416" y2="105" stroke="var(--teal)" stroke-width="1.6" marker-end="url(#arrowT2)"/>
+            <g transform="translate(416,80)"><rect width="150" height="50" rx="7" fill="var(--teal-soft)" stroke="var(--teal-line)"/><text x="75" y="24" text-anchor="middle" font-weight="600" font-size="11">custom logp</text><text x="75" y="40" text-anchor="middle" font-size="10" fill="var(--ink-soft)">₂F₁ stabilized</text></g>
+            <line x1="566" y1="105" x2="614" y2="105" stroke="var(--teal)" stroke-width="1.6" marker-end="url(#arrowT2)"/>
+            <line x1="368" y1="175" x2="614" y2="130" stroke="var(--teal)" stroke-width="1.6" marker-end="url(#arrowT2)"/>
+            <g transform="translate(614,80)"><rect width="180" height="50" rx="7" fill="var(--teal-soft)" stroke="var(--teal-line)"/><text x="90" y="24" text-anchor="middle" font-weight="600" font-size="11">posterior</text><text x="90" y="40" text-anchor="middle" font-size="10" fill="var(--ink-soft)">r, α, a, b, ...</text></g>
+          </g>
+        </svg>
+        <div class="flow-cap"><span class="mono">clv/distributions.py</span> holds the shared custom log-likelihoods that BetaGeo and Pareto/NBD both compile against.</div>
+      </div>
+    </section>
+
+    <section class="chapter" id="clv-math">
+      <h2>Purchase timing and monetary value</h2>
+      <p class="intro">Two non-contractual timing models that differ only in <i>when</i> a customer is allowed to churn, plus a spend model that is independent of timing entirely.</p>
+
+      <div class="eqcard">
+        <div class="eq-title"><h3>BetaGeo/NBD — dropout each period</h3><span class="cite mono">distributions.py:478-491</span></div>
+        <div class="prior-row">
+          <span class="prior-chip">α ~ Weibull(2, 10)</span>
+          <span class="prior-chip">r ~ Weibull(2, 1)</span>
+          <span class="prior-chip">a = φκ, b = (1−φ)κ</span>
+          <span class="prior-chip">φ ~ Uniform(0,1), κ ~ Pareto(1,1)</span>
+        </div>
+        <div class="math">\[ L(r,\alpha,a,b \mid x,t_x,T) = \frac{\Gamma(r+x)}{\Gamma(r)}\frac{\alpha^{r}}{(\alpha+t_x)^{r+x}} \;+\; \mathbb{1}_{x>0}\,\frac{\Gamma(a+b)\Gamma(b+x)}{\Gamma(b)\Gamma(a+b+x)}\left[\frac{a}{b+x-1}\right]\left(\frac{\alpha+t_x}{\alpha+T}\right)^{r+x} \]</div>
+        <div class="why">A customer can only drop out right after a purchase. <b>a, b</b> parameterize a Beta prior on that per-transaction dropout probability; <b>r, α</b> parameterize a Gamma prior on purchase rate. <span class="mono" style="font-size:.75em">beta_geo.py:169-178</span></div>
+      </div>
+
+      <div class="eqcard">
+        <div class="eq-title"><h3>Pareto/NBD — dropout any time</h3><span class="cite mono">distributions.py:159-174</span></div>
+        <div class="prior-row">
+          <span class="prior-chip">r, s ~ Weibull(2, 1)</span>
+          <span class="prior-chip">α, β ~ Weibull(2, 10)</span>
+        </div>
+        <div class="math">\[ L(r,\alpha,s,\beta \mid x,t_x,T) \;\propto\; \frac{\Gamma(r+x)\,\alpha^{r}\beta^{s}}{ \left(\alpha+T\right)^{r+x}\left(\beta+T\right)^{s}} \Big[\,1 + \tfrac{s}{r+s+x}\; {}_2F_1\big(r+s+x,\,s+1;\,r+s+x+1;\,z\big)\Big] \]</div>
+        <div class="why">Letting dropout happen at any continuous instant — not just after an order — pulls in the Gauss hypergeometric function <b>₂F₁</b>. pymc-marketing evaluates it in log-space to keep it numerically stable at the parameter ranges MCMC actually explores.</div>
+      </div>
+
+      <div class="eqcard">
+        <div class="eq-title"><h3>Gamma-Gamma — monetary value</h3><span class="cite mono">gamma_gamma.py:363-373</span></div>
+        <div class="prior-row">
+          <span class="prior-chip">p, q ~ Weibull(2, 1)</span>
+          <span class="prior-chip">v ~ Weibull(2, 10)</span>
+        </div>
+        <div class="math">\[ \mathbb{E}[M \mid p,q,v,x,\bar z] = \frac{\Gamma(px+q)}{\Gamma(px)\,\Gamma(q)}\; v^{q}\,\bar z^{\,px-1}\, x^{px}\, \big(x\bar z + v\big)^{-(px+q)} \]</div>
+        <div class="why">Deliberately has no time in it at all — spend-per-transaction <b>z̄</b> is modeled as independent of how often or how long a customer buys, which is the standard (and testable) Gamma-Gamma assumption.</div>
+      </div>
+    </section>
+
+    <!-- ===================== DISCRETE CHOICE ===================== -->
+    <section class="chapter" id="choice-flow">
+      <div class="chapter-eyebrow">Discrete Choice</div>
+      <h2>Aggregate shares vs. individual choices</h2>
+      <p class="intro">Same underlying idea — a utility per product, converted to a probability — applied at two different resolutions: market shares you can only observe in aggregate, and individual respondents whose exact choice you saw.</p>
+      <div class="flow-wrap">
+        <svg viewBox="0 0 820 260" width="100%">
+          <defs><marker id="arrowT3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--teal)"/></marker></defs>
+          <g font-family="IBM Plex Mono" font-size="12" fill="var(--ink)">
+            <g transform="translate(10,105)"><rect width="140" height="50" rx="7" fill="var(--teal-soft)" stroke="var(--teal-line)"/><text x="70" y="24" text-anchor="middle" font-weight="600" font-size="11">choice data</text><text x="70" y="40" text-anchor="middle" font-size="10" fill="var(--ink-soft)">products, attrs</text></g>
+            <line x1="150" y1="35" x2="198" y2="35" stroke="var(--teal)" stroke-width="1.6" marker-end="url(#arrowT3)"/>
+            <line x1="150" y1="130" x2="198" y2="130" stroke="var(--teal)" stroke-width="1.6" marker-end="url(#arrowT3)"/>
+            <line x1="150" y1="130" x2="198" y2="195" stroke="var(--teal)" stroke-width="1.6" marker-end="url(#arrowT3)"/>
+            <line x1="150" y1="130" x2="198" y2="65" stroke="var(--teal)" stroke-width="1.6" marker-end="url(#arrowT3)"/>
+            <g transform="translate(198,10)"><rect width="170" height="50" rx="7" fill="var(--teal-soft)" stroke="var(--teal-line)"/><text x="85" y="24" text-anchor="middle" font-weight="600" font-size="11">BayesianBLP</text><text x="85" y="40" text-anchor="middle" font-size="10" fill="var(--ink-soft)">aggregate shares</text></g>
+            <g transform="translate(198,105)"><rect width="170" height="50" rx="7" fill="var(--teal-soft)" stroke="var(--teal-line)"/><text x="85" y="24" text-anchor="middle" font-weight="600" font-size="11">MixedLogit</text><text x="85" y="40" text-anchor="middle" font-size="10" fill="var(--ink-soft)">individual choice</text></g>
+            <g transform="translate(198,170)"><rect width="170" height="50" rx="7" fill="var(--teal-soft)" stroke="var(--teal-line)"/><text x="85" y="24" text-anchor="middle" font-weight="600" font-size="11">MaxDiff</text><text x="85" y="40" text-anchor="middle" font-size="10" fill="var(--ink-soft)">best-worst scaling</text></g>
+            <g transform="translate(198,225)"><rect width="170" height="45" rx="7" fill="var(--amber-soft)" stroke="var(--amber-line)"/><text x="85" y="28" text-anchor="middle" font-weight="600" font-size="11" fill="var(--amber)">MVITS (causal)</text></g>
+            <line x1="368" y1="35" x2="416" y2="105" stroke="var(--teal)" stroke-width="1.6" marker-end="url(#arrowT3)"/>
+            <line x1="368" y1="130" x2="416" y2="120" stroke="var(--teal)" stroke-width="1.6" marker-end="url(#arrowT3)"/>
+            <line x1="368" y1="195" x2="416" y2="135" stroke="var(--teal)" stroke-width="1.6" marker-end="url(#arrowT3)"/>
+            <g transform="translate(416,95)"><rect width="180" height="50" rx="7" fill="var(--teal-soft)" stroke="var(--teal-line)"/><text x="90" y="24" text-anchor="middle" font-weight="600" font-size="11">posterior</text><text x="90" y="40" text-anchor="middle" font-size="10" fill="var(--ink-soft)">utilities + shares</text></g>
+          </g>
+        </svg>
+      </div>
+    </section>
+
+    <section class="chapter" id="choice-math">
+      <h2>Utility and share equations</h2>
+
+      <div class="eqcard">
+        <div class="eq-title"><h3>BayesianBLP — aggregate market shares</h3><span class="cite mono">bayesian_blp.py:741-880</span></div>
+        <div class="math">\[ \delta_{jm} = \alpha p_{jm} + \sum_k \beta_k x_{jmk} + \xi_{jm}, \qquad s_j = \mathrm{softmax}(\delta)_j \]</div>
+        <div class="math">\[ \log(s_j/s_0) \sim \mathcal{N}\big(\log(\hat s_j/\hat s_0),\, \sigma^2\big) \]</div>
+        <div class="why">You never see individual buyers here, only the market share each product landed at — <b>ξ<sub>jm</sub></b> is an unobserved product/market shock, and the likelihood matches log-share-ratios rather than raw shares for numerical reasons.</div>
+      </div>
+
+      <div class="eqcard">
+        <div class="eq-title"><h3>MixedLogit — individual random coefficients</h3><span class="cite mono">mixed_logit.py:687-982</span></div>
+        <div class="math">\[ U_{ij} = \sum_d X_{jd}\,\beta_{id} + W_i \delta + \alpha_j, \qquad \beta_{id} \sim \mathcal{N}(\mu_d, \sigma_d) \]</div>
+        <div class="math">\[ P_{ij} = \mathrm{softmax}(U_i)_j, \qquad y_i \sim \mathrm{Categorical}(P_i) \]</div>
+        <div class="why">Each respondent <b>i</b> gets their own taste coefficients <b>β<sub>id</sub></b>, drawn from a population Normal — this is what separates "mixed" logit from a plain multinomial logit with one shared β.</div>
+      </div>
+
+      <div class="eqcard">
+        <div class="eq-title"><h3>MaxDiff — best-worst scaling</h3><span class="cite mono">maxdiff.py:901-926</span></div>
+        <div class="math">\[ P(\text{best}) = \mathrm{softmax}(U), \qquad P(\text{worst}) = \mathrm{softmax}(-U_{\setminus \text{best}}) \]</div>
+        <div class="why">Two Categorical likelihoods off the same utility vector — picking the best item and, separately, the worst among what's left — extracts more signal per question than a single choice would.</div>
+      </div>
+
+      <div class="eqcard">
+        <div class="eq-title"><h3>MVITS — cannibalization</h3><span class="cite mono">mv_its.py:154-332</span></div>
+        <div class="prior-row"><span class="prior-chip">β ~ Dirichlet(0.5)</span></div>
+        <div class="math">\[ \mu_{it} = \text{intercept}_i - y_t\,\beta_i, \qquad y_{it} \sim \mathrm{TruncatedNormal}(\mu_{it}, \cdot\,;\, y\ge 0) \]</div>
+        <div class="why">A launched product's sales <b>y<sub>t</sub></b> pull down existing products' expected sales through <b>β<sub>i</sub></b> — a Dirichlet prior keeps the cannibalized share split across existing products summing sensibly, and <code>pm.do()</code> runs the no-launch counterfactual.</div>
+      </div>
+    </section>
+
+    <footer class="end">
+      Every equation and file:line reference above was pulled directly from the pymc-marketing source during a research pass across <span class="mono">mmm/</span>, <span class="mono">clv/</span>, and <span class="mono">customer_choice/</span> — nothing here is a generic textbook formula swapped in for the real one.
+    </footer>
+  </main>
+</div>
+
+<script>
+  window.MathJax = {
+    tex: { inlineMath: [['\\(','\\)']], displayMath: [['\\[','\\]']] },
+    svg: { fontCache: 'global' }
+  };
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-svg.js"></script>
+<script>
+  (function(){
+    var links = Array.prototype.slice.call(document.querySelectorAll('.toc-list a'));
+    var sections = links.map(function(a){ return document.querySelector(a.getAttribute('href')); }).filter(Boolean);
+    function onScroll(){
+      var pos = window.scrollY + 140;
+      var current = sections[0];
+      sections.forEach(function(s){ if (s.offsetTop <= pos) current = s; });
+      links.forEach(function(a){
+        var target = document.querySelector(a.getAttribute('href'));
+        a.classList.toggle('active', target === current);
+      });
+    }
+    document.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+  })();
+</script>
